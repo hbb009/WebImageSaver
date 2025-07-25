@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8" />
+    <title>Plugin Settings</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+        }
+
+        input[type="text"] {
+            width: 300px;
+        }
+
+        label {
+            display: block;
+            margin-top: 12px;
+        }
+    </style>
+</head>
+<body>
+    <h2>Image Saver - Settings</h2>
+    <label>
+        Save server address (default is local)
+        <input type="text" id="serverUrl" placeholder="http://127.0.0.1:8787" />
+    </label>
+
+    <label>
+        <input type="checkbox" id="useAltKey" checked />
+        Save image only while holding down the Alt key
+    </label>
+
+    <button id="saveBtn">Save settings</button>
+    <div id="status" style="margin-top:10px;color:green;"></div>
+
+    <script src="options.js"></script>
+</body>
+</html>
