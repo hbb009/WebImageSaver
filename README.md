@@ -1,63 +1,67 @@
-﻿# 网页图片 + 文本笔记保存器 WebImageSaver
+﻿📘 README.md 示例内容（适配你当前“桌面助手 v6.2”功能）
 
-> 一个用于快速保存网页图片和相关文字说明的小工具，适用于写作、收图、资料整理等日常任务。
+# 桌面助手 v6.2
 
-> A handy tool for quickly saving web images and their related textual notes, perfect for writing, collecting, and research.
-
----
-
-## 🌟 功能特色 Features
-
-- 🖱️ 【Alt + 左键】快速保存网页图片（非截图，直接下载原图）
-- 📋 【右键复制图片】自动保存剪贴板中的图片
-- 📝 【复制文字】自动生成与图片同名的 `.txt` 说明文档
-- 🗂️ 可视化界面 + 自定义保存路径
-- 📋 支持浏览器扩展（Chrome 插件），增强网页交互体验
+一个专为 AI 从业者和创作者设计的实用桌面工具，集成多项快捷功能，包括图像文本速存、区域截图、比例计算器等，提升日常工作效率。
 
 ---
 
-## 📦 使用方式 How to Use
+## 📦 功能总览
 
-### ✅ 方法一：直接运行 Python 源码（需安装 Python 3.10+）
-
-1. 安装依赖：
-    ```bash
-    pip install flask pillow pyqt5
-    ```
-
-2. 运行主程序：
-    ```bash
-    python main.py
-    ```
-
-3. 浏览器中加载扩展：
-    - 打开 Chrome 的扩展程序页面 `chrome://extensions/`
-    - 打开“开发者模式”
-    - 点击“加载已解压的扩展程序”
-    - 选择 `chrome_image_saver_configurable` 目录
-
-4. 使用方法：
-    - 将鼠标放在网页图片上 → 按下【Alt + 左键】
-    - 或者在图片上右键 → 选择“复制图片”
-    - 再复制任意文字（图片保存后）→ 自动写入文本
+### 🖼️ 速存图文
+- **Alt + 鼠标左键** 快速保存网页图片（配合浏览器插件）
+- 自动监听剪贴板文本并保存为与图片同名的 `.txt` 文件
+- 可手动设定图片保存路径
+- 自动记录所有保存的图片与文本
+- **启用/禁用开关**，切换功能状态
 
 ---
 
-### ✅ 方法二：打包成可执行文件（.exe）
-
-1. 安装 pyinstaller：
-    ```bash
-    pip install pyinstaller
-    ```
-
-2. 打包程序：
-    ```bash
-    pyinstaller --onefile --noconsole main.py
-    ```
-
-3. 打包完成后，会生成 `dist/main.exe`，双击即可运行。
+### ✂️ 截图工具（组合键触发 + 区域截图）
+- 自定义截图快捷键（如 `Ctrl + F6`）
+- 鼠标左键拖动截图区域，右键取消，ESC退出截图
+- 自动保存为 PNG，支持复制到剪贴板
+- 显示截图区域尺寸提示
+- 截图保存路径可自定义
+- 切换至其他页面时**自动关闭监听**，保障稳定性
 
 ---
 
-## 🧩 项目结构 Project Structure
+### 📐 比例计算器
+- 输入 A、B、C 自动计算 D，公式：`D = B × C ÷ A`
+- A、B 设定最大 5 位整数
+- C 可为任意正整数，D 自动保留 2 位小数
+- “AB交换”按钮可快速对换 A/B 数值
+- “复制D数”可将结果整数部分复制到剪贴板
+- 右侧提供清晰的操作说明
+
+---
+
+## ⚙️ 设置页
+- 目前为占位页，未来可扩展更多配置选项（如启动项、自定义风格等）
+
+---
+
+## 🛠 依赖库（运行前需安装）
+
+```bash
+pip install PyQt5 keyboard pyautogui numpy requests flask flask-cors
+
+🚀 启动方式
+
+python mainv62.py
+
+📁 默认保存路径
+
+图片和截图：~/Pictures/WebImageSaver
+可在界面中通过“浏览”按钮进行自定义
+
+
+
+
+
+
+
+
+
 
