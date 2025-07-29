@@ -1,30 +1,34 @@
-from PyQt5.QtWidgets import (
-    QApplication, QWidget, QLabel, QPushButton, QLineEdit,
-    QFileDialog, QListWidget, QVBoxLayout, QHBoxLayout,
-    QFrame, QSizePolicy, QTabWidget, QCheckBox
-)
-from PyQt5.QtGui import QFont, QIcon, QPixmap
-from PyQt5.QtCore import Qt, QTimer, QMimeData, QBuffer, QIODevice
-from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QFrame, QWidget
-
-from PyQt5.QtCore import pyqtSignal, QRect, QPoint, QObject
-from PyQt5.QtGui import QPainter, QColor, QPen
-
-from datetime import datetime
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from PyQt5.QtCore import pyqtSignal, QRect, QPoint, QObject
-from PyQt5.QtGui import QPainter, QPen
-from PyQt5.QtWidgets import QComboBox
-from PyQt5.QtGui import QImage
-
-import numpy as np
+# 标准库
+import os
+import sys
 import threading
 import requests
-import sys
-import os
+from datetime import datetime
+
+# 第三方库
+import numpy as np
 import keyboard
 import pyautogui
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+
+# PyQt5 - Widgets
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QLabel, QPushButton, QLineEdit, QFileDialog,
+    QListWidget, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy,
+    QCheckBox, QComboBox, QStackedWidget, QGridLayout
+)
+
+# PyQt5 - Core
+from PyQt5.QtCore import (
+    Qt, QTimer, QMimeData, QBuffer, QIODevice, pyqtSignal,
+    QRect, QPoint, QObject
+)
+
+# PyQt5 - Gui
+from PyQt5.QtGui import (
+    QFont, QIcon, QPixmap, QPainter, QColor, QPen, QImage
+)
 
 # Flask 服务
 flask_app = Flask(__name__)
@@ -140,13 +144,77 @@ class Overlay(QWidget):
             self.on_cancel()
             self.close()
 
-
 class MainApp(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("桌面助手 v6.1")
-        self.setFixedSize(600, 406)
+        self.setWindowIcon(QIcon("star.ico"))
+        self.setWindowTitle("桌面助手 v6.7")
+        self.setFixedWidth(600)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowMaximizeButtonHint)
+
+        self.setFont(QFont("微软雅黑", 14))  # 原字体大小是8-9，提升为12更清晰
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #20233A;
+                color: #ffffff;
+                font-family: '微软雅黑';
+            }
+            QPushButton {
+                background-color: #2B2E45;
+                color: white;
+                border: 1px solid #444;
+                padding: 8px;
+                border-radius: 10px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: #3A3D5C;
+            }
+            QLineEdit {
+                background-color: #2B2E45;
+                color: white;
+                border: 1px solid #444;
+                border-radius: 6px;
+                padding: 6px;
+            }
+            QListWidget {
+                background-color: #2B2E45;
+                border: 1px solid #444;
+                padding: 4px;
+                color: white;
+            }
+            QLabel {
+                color: white;
+                font-size: 14px;
+            }
+            QCheckBox {
+                font-size: 14px;
+            }
+            QComboBox {
+                background-color: #2B2E45;
+                color: white;
+                border: 1px solid #444;
+                padding: 4px;
+            }
+            QScrollBar:vertical, QScrollBar:horizontal {
+                background: #2B2E45;
+            }
+            QPushButton {
+                min-height: 40px;
+                font-size: 15px;
+                border-radius: 12px;
+            }
+            QCheckBox, QLabel {
+                font-size: 14px;
+            }
+            QLineEdit, QComboBox {
+                min-height: 34px;
+                font-size: 14px;
+            }
+            VBoxLayout, QHBoxLayout {
+                spacing: 12px;
+            }
+        """)
 
         threading.Thread(target=start_flask, daemon=True).start()
 
@@ -156,11 +224,10 @@ class MainApp(QWidget):
         self.signal = ScreenshotSignal()
         self.signal.trigger.connect(self.activate_overlay)
 
-        self.tabs = QTabWidget()
-        self.tabs.currentChanged.connect(self.on_tab_changed)
+        self.stack = QStackedWidget()
 
         self.setLayout(QVBoxLayout())
-        self.layout().addWidget(self.tabs)
+        self.layout().addWidget(self.stack)
 
         self.init_tab_fast_save()
         self.init_tab_screenshot()
@@ -171,23 +238,51 @@ class MainApp(QWidget):
         self.update_timer.timeout.connect(self.check_queue)
         self.update_timer.start(1000)
 
+        # ✅ 创建底部导航按钮栏
+        bottom_bar = QHBoxLayout()
+        self.btn_fast = QPushButton("速存图文")
+        self.btn_shot = QPushButton("截图工具")
+        self.btn_calc = QPushButton("比例计算")
+        self.btn_setting = QPushButton("系统设置")
+
+        for btn in [self.btn_fast, self.btn_shot, self.btn_calc, self.btn_setting]:
+            btn.setFixedHeight(40)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #2B2E45;
+                    color: white;
+                    font-size: 14px;
+                    border: 1px solid #444;
+                    border-radius: 10px;
+                    min-width: 80px;
+                }
+                QPushButton:hover {
+                    background-color: #3A3D5C;
+                }
+            """)
+
+        bottom_bar.addWidget(self.btn_fast)
+        bottom_bar.addWidget(self.btn_shot)
+        bottom_bar.addWidget(self.btn_calc)
+        bottom_bar.addWidget(self.btn_setting)
+
+        self.layout().addLayout(bottom_bar)
+        self.set_active_button(self.btn_fast)
+
+        # ✅ 绑定切换功能页
+        self.btn_fast.clicked.connect(lambda: (self.stack.setCurrentIndex(0), self.set_active_button(self.btn_fast)))
+        self.btn_shot.clicked.connect(lambda: (self.stack.setCurrentIndex(1), self.set_active_button(self.btn_shot)))
+        self.btn_calc.clicked.connect(lambda: (self.stack.setCurrentIndex(2), self.set_active_button(self.btn_calc)))
+        self.btn_setting.clicked.connect(lambda: (self.stack.setCurrentIndex(3), self.set_active_button(self.btn_setting)))
+
     def init_tab_fast_save(self):
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(20, 20, 20, 20)
 
-        # 添加在 top_row 之前
-        top_bar = QHBoxLayout()
-        top_bar.addStretch()
-
-        # ✅ 创建、设置状态
         self.enabled_checkbox = QCheckBox("启用")
         self.enabled_checkbox.setChecked(True)
-
-        # ✅ 添加到界面
-        top_bar.addWidget(self.enabled_checkbox)
-        layout.addLayout(top_bar)
-
-        # 绑定信号放最后
         self.enabled_checkbox.clicked.connect(self.toggle_hint)
 
         self.save_path = QLineEdit()
@@ -198,22 +293,34 @@ class MainApp(QWidget):
         self.browse_btn.setStyleSheet("padding: 5px;")
         self.browse_btn.clicked.connect(self.select_path)
 
-        top_row = QHBoxLayout()
-        top_row.addWidget(QLabel("图文保存路径:"))
-        top_row.addWidget(self.save_path)
-        top_row.addWidget(self.browse_btn)
+        # 第1行：左文字 + 右启用框
+        row1 = QHBoxLayout()
+        label = QLabel("图文保存路径:")
+        label.setStyleSheet("font-size: 14px; min-width: 100px;")
+        row1.addWidget(label)
+        row1.addStretch()
+        row1.addWidget(self.enabled_checkbox)
+        layout.addLayout(row1)
+
+        # 第2行：左路径 + 右按钮
+        row2 = QHBoxLayout()
+        row2.addWidget(self.save_path)
+        row2.addWidget(self.browse_btn)
+        layout.addLayout(row2)
 
         self.list_widget = QListWidget()
+        self.list_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self.list_widget.setFixedHeight(200)
         self.list_widget.setStyleSheet("font-size: 14px;")
 
         hint = QLabel("提示：如有安装扩展程序，可使用 Alt+鼠标左键保存图片，复制的文字会自动保存为文本")
-        hint.setStyleSheet("font-size: 12px; color: gray; padding: 4px;")
+        hint.setStyleSheet("font-size: 18px; color: gray; padding: 0px; margin-top: 12px;")
         hint.setWordWrap(True)
 
-        layout.addLayout(top_row)
         layout.addWidget(self.list_widget)
-        layout.addWidget(hint)
-        self.tabs.addTab(page, "速存图文")
+        layout.addStretch()  # 把上面控件顶上去
+        layout.addWidget(hint, alignment=Qt.AlignBottom)
+        self.stack.addWidget(page)
 
         self.last_saved_image = ""
         self.clipboard = QApplication.clipboard()
@@ -278,43 +385,68 @@ class MainApp(QWidget):
     def init_tab_screenshot(self):
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(20, 20, 20, 20)
 
-        key_row = QHBoxLayout()
-        key_row.addWidget(QLabel("组合键: "))
+        # 第1行：左=文字，右=启用截图
+        row1 = QHBoxLayout()
+        label = QLabel("截图保存路径：")
+        label.setStyleSheet("font-size: 14px;")
+        row1.addWidget(label)
+
+        row1.addStretch()
+
+        self.screenshot_toggle = QCheckBox("启用截图")
+
+        self.function_combo = QComboBox()
+        self.screenshot_toggle.stateChanged.connect(self.toggle_screenshot_listener)
+        row1.addWidget(self.screenshot_toggle)
+
+        layout.addLayout(row1)
+
+        # 第2行：左=路径栏，右=按钮
+        row2 = QHBoxLayout()
+        self.screenshot_path = QLineEdit()
+        self.screenshot_path.setText(os.path.join(os.path.expanduser("~"), "Pictures", "WebImageSaver"))
+        self.screenshot_path.setStyleSheet("padding: 5px; font-size: 14px;")
+        row2.addWidget(self.screenshot_path)
+
+        path_btn = QPushButton("另选保存")
+        path_btn.setStyleSheet("padding: 5px;")
+        path_btn.clicked.connect(self.select_screenshot_path)
+        row2.addWidget(path_btn)
+        
+        layout.addLayout(row2)
+
+        # 第3行：左列表，右组合+功能键
+        row3 = QHBoxLayout()
+
+        # 左边文件列表
+        self.screenshot_list = QListWidget()
+        self.screenshot_list.setStyleSheet("font-size: 16px;")
+        self.screenshot_list.setFixedHeight(200)
+        row3.addWidget(self.screenshot_list, 3)  # 左边占比3份
+
+        # 右边：垂直组合键 + 功能键
+        right_col = QVBoxLayout()
+        right_col.addWidget(QLabel("组合键："))
         self.modifier_combo = QComboBox()
         self.modifier_combo.addItems(["Ctrl", "Alt", "Shift"])
-        key_row.addWidget(self.modifier_combo)
+        right_col.addWidget(self.modifier_combo)
 
-        key_row.addWidget(QLabel("功能键: "))
+        right_col.addWidget(QLabel("功能键："))
         self.function_combo = QComboBox()
         self.function_combo.addItems([f"F{i}" for i in range(1, 13)])
-        key_row.addWidget(self.function_combo)
+        right_col.addWidget(self.function_combo)
 
-        self.screenshot_toggle = QCheckBox("启用截图监听")
-        self.screenshot_toggle.stateChanged.connect(self.toggle_screenshot_listener)
-        key_row.addWidget(self.screenshot_toggle)
+        row3.addLayout(right_col, 1)  # 右边占比1份
+        layout.addLayout(row3)
 
-        layout.addLayout(key_row)
-
-        path_row = QHBoxLayout()
-        path_row.addWidget(QLabel("截图保存路径:"))
-        self.screenshot_path = QLineEdit()
-        self.screenshot_path.setText(os.path.expanduser("~/Pictures/WebImageSaver"))
-        path_btn = QPushButton("浏览")
-        path_btn.clicked.connect(self.select_screenshot_path)
-        path_row.addWidget(self.screenshot_path)
-        path_row.addWidget(path_btn)
-        layout.addLayout(path_row)
-
-        self.screenshot_list = QListWidget()
-        self.screenshot_list.setStyleSheet("font-size: 13px;")
-        layout.addWidget(self.screenshot_list)
-
+        # 第4行：状态栏
         self.screenshot_status = QLabel("当前截图监听未启用")
-        self.screenshot_status.setStyleSheet("color: gray;")
+        self.screenshot_status.setStyleSheet("font-size: 18px; color: gray;")
         layout.addWidget(self.screenshot_status)
 
-        self.tabs.addTab(page, "截图")
+        self.stack.addWidget(page)
 
     def select_screenshot_path(self):
         folder = QFileDialog.getExistingDirectory(self, "选择截图保存文件夹")
@@ -324,12 +456,12 @@ class MainApp(QWidget):
     def toggle_screenshot_listener(self, state):
         if state == Qt.Checked:
             self.screenshot_status.setText("截图监听已启用（等待快捷键）")
-            self.screenshot_status.setStyleSheet("color: green;")
+            self.screenshot_status.setStyleSheet("font-size: 18px; color: green;")
             self.screenshot_listener_active = True
             self.start_screenshot_listener()
         else:
             self.screenshot_status.setText("当前截图监听未启用")
-            self.screenshot_status.setStyleSheet("color: gray;")
+            self.screenshot_status.setStyleSheet("font-size: 18px; color: gray;")
             self.screenshot_listener_active = False
             keyboard.unhook_all_hotkeys()
 
@@ -380,14 +512,26 @@ class MainApp(QWidget):
 
     def init_tab_ratio(self):
         page = QWidget()
-        main_layout = QHBoxLayout(page)  # ✅ 添加这一行定义主布局
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(20, 20, 20, 20)
 
-        # 左侧：原比例计算器
-        left_layout = QVBoxLayout()
-        title = QLabel("比例计算器")
-        title.setFont(QFont("Segoe UI", 12, QFont.Bold))
-        title.setAlignment(Qt.AlignHCenter)
-        left_layout.addWidget(title)
+        font18 = QFont("微软雅黑", 18)
+
+        # 输入框
+        self.input_a = QLineEdit(); self.input_a.setPlaceholderText("A")
+        self.input_b = QLineEdit(); self.input_b.setPlaceholderText("B")
+        self.input_c = QLineEdit(); self.input_c.setPlaceholderText("C")
+        self.input_d = QLineEdit(); self.input_d.setPlaceholderText("D")
+        self.input_d.setReadOnly(True)
+        self.input_d.setEnabled(False)
+
+        for w in [self.input_a, self.input_b, self.input_c, self.input_d]:
+            w.setFont(font18)
+            w.setFixedHeight(40)
+            w.setAlignment(Qt.AlignCenter)
+            w.setStyleSheet("padding: 6px; border-radius: 6px;")
+
+        from PyQt5.QtGui import QIntValidator
 
         self.input_a = QLineEdit(); self.input_a.setPlaceholderText("A")
         self.input_b = QLineEdit(); self.input_b.setPlaceholderText("B")
@@ -413,58 +557,93 @@ class MainApp(QWidget):
         for inp in [self.input_a, self.input_b, self.input_c]:
             inp.textChanged.connect(lambda: self.timer.start(1000))
 
-        self.swap_btn = QPushButton("AB交换")
-        self.swap_btn.setFixedWidth(80)
-        self.swap_btn.setStyleSheet("padding: 5px; font-size: 13px;")
+        # 第1行：A 与 C
+        row1 = QHBoxLayout()
+        left_group = QHBoxLayout()
+        a_label = QLabel("A")
+        a_label.setFont(font18)
+        a_label.setFixedWidth(30)
+        row1.addWidget(a_label)
+        row1.addWidget(self.input_a)
+        right_group = QHBoxLayout()
+        row1.addStretch()
+        c_label = QLabel("C")
+        c_label.setFont(font18)
+        c_label.setFixedWidth(30)
+        row1.addWidget(c_label)
+        row1.addWidget(self.input_c)
+
+        # 第2行：B 与 D
+        row2 = QHBoxLayout()
+        b_label = QLabel("B")
+        b_label.setFont(font18)
+        b_label.setFixedWidth(30)
+        row2.addWidget(b_label)
+        row2.addWidget(self.input_b)
+        row2.addStretch()
+        d_label = QLabel("D")
+        d_label.setFont(font18)
+        d_label.setFixedWidth(30)
+        row2.addWidget(d_label)
+        row2.addWidget(self.input_d)
+
+        # 第3行：按钮 + 说明标签
+        row3 = QHBoxLayout()
+
+        ab_label = QLabel("A与B数值互换")
+        ab_label.setFont(font18)
+        self.swap_btn = QPushButton("交换")
+        self.swap_btn.setFont(font18)
+        self.swap_btn.setFixedWidth(100)
         self.swap_btn.clicked.connect(self.swap_ab)
 
-        self.copy_d_btn = QPushButton("复制D数")
-        self.copy_d_btn.setFixedWidth(80)
-        self.copy_d_btn.setStyleSheet("padding: 5px; font-size: 13px;")
+        d_label = QLabel("D数值")
+        d_label.setFont(font18)
+        self.copy_d_btn = QPushButton("复制")
+        self.copy_d_btn.setFont(font18)
+        self.copy_d_btn.setFixedWidth(100)
         self.copy_d_btn.clicked.connect(self.copy_d_value)
 
-        def row(label, widget):
-            h = QHBoxLayout()
-            h.addWidget(QLabel(label))
-            h.addWidget(widget)
-            return h
+        left_part = QHBoxLayout()
+        left_part.addWidget(ab_label)
+        left_part.addWidget(self.swap_btn)
+        right_part = QHBoxLayout()
+        right_part.addWidget(d_label)
+        right_part.addWidget(self.copy_d_btn)
+        row3.addLayout(left_part)
+        row3.addStretch()
+        row3.addLayout(right_part)
 
-        left_layout.addLayout(row("A", self.input_a))
-        left_layout.addLayout(row("B", self.input_b))
-        left_layout.addWidget(self.swap_btn, alignment=Qt.AlignLeft)
-        left_layout.addWidget(QFrame(frameShape=QFrame.HLine), alignment=Qt.AlignBottom)
-        left_layout.addLayout(row("C", self.input_c))
-        left_layout.addLayout(row("D", self.input_d))
-        left_layout.addWidget(self.copy_d_btn, alignment=Qt.AlignLeft)
+        # 分割线
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setFrameShadow(QFrame.Sunken)
 
-        # 中间竖线
-        vline = QFrame()
-        vline.setFrameShape(QFrame.VLine)
-        vline.setFrameShadow(QFrame.Sunken)
+        # 底部说明文字
+        tip = QLabel("""请输入 A、B、C 任意数值，系统将自动计算出：A : B = C : D\n点击“交换”可对换 A 与 B 数值；\n点击“复制”可将 D 的整数部分复制到剪贴板。""")
+        tip.setFont(QFont("微软雅黑", 16))
+        tip.setStyleSheet("color: gray;")
+        tip.setWordWrap(True)
 
-        # 右侧说明
-        right_layout = QVBoxLayout()
-        guide = QLabel()
-        guide.setText("""
-        请输入A、B、C任意数值，系统将自动计算出D = B × C ÷ A。
-        点击“AB交换”可快速对换A与B数值。
-        点击“复制D数”可将D的整数部分复制到剪贴板。
-        """)
+        # 装入主 layout
+        row1_wrapper = QHBoxLayout()
+        row1_wrapper.addStretch()
+        row1_wrapper.addLayout(row1)
+        row1_wrapper.addStretch()
+        layout.addLayout(row1_wrapper)
 
-        guide.setWordWrap(True)
-        guide.setStyleSheet("font-size: 13px; color: gray;")
-        right_layout.addWidget(guide)
+        row2_wrapper = QHBoxLayout()
+        row2_wrapper.addStretch()
+        row2_wrapper.addLayout(row2)
+        row2_wrapper.addStretch()
+        layout.addLayout(row2_wrapper)
 
-        # ✅ 用一个包裹层把左边内容顶上去
-        left_wrapper = QVBoxLayout()
-        left_wrapper.addLayout(left_layout)
-        left_wrapper.addStretch()  # ⬅ 保证下方空白，内容靠上
-        main_layout.addLayout(left_wrapper)
-        # ✅ 中间竖线和右侧说明保持不变
-        main_layout.addWidget(vline)
-        main_layout.addLayout(right_layout)
+        layout.addLayout(row3)  # ✅ 把第三行按钮添加进主布局
+        layout.addWidget(line)
+        layout.addWidget(tip)
+        layout.addStretch()
 
-        self.tabs.addTab(page, "比例计算器")
+        self.stack.addWidget(page)
 
     def update_result(self):
         try:
@@ -501,25 +680,48 @@ class MainApp(QWidget):
     def init_tab_settings(self):
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(20, 20, 20, 20)
         layout.addWidget(QLabel("【设置】功能开发中..."))
-        self.tabs.addTab(page, "设置")
+        self.stack.addWidget(page)
 
-    def on_tab_changed(self, index):
-        tab_name = self.tabs.tabText(index)
+    def set_active_button(self, active_btn):
+        # 页面切换时，自动关闭不该启用的功能
+        if active_btn != self.btn_fast:
+            if self.enabled_checkbox.isChecked():
+                self.enabled_checkbox.setChecked(False)
+                self.toggle_hint(False)
 
-        # 强制关闭速存图文
-        if hasattr(self, 'enabled_checkbox') and self.enabled_checkbox.isChecked():
-            self.enabled_checkbox.setChecked(False)
+        if active_btn != self.btn_shot:
+            if self.screenshot_toggle.isChecked():
+                self.screenshot_toggle.setChecked(False)
+                self.toggle_screenshot_listener(Qt.Unchecked)
 
-        # 强制关闭截图监听
-        if hasattr(self, 'screenshot_toggle') and self.screenshot_toggle.isChecked():
-            self.screenshot_toggle.setChecked(False)
-
-        # 其他功能页如“截图”、“比例计算器”等将来也可以在这里加：
-        # elif tab_name == "截图":
-        #     self.start_screenshot_mode()
-        # elif tab_name == "比例计算器":
-        #     self.activate_ratio_tool()
+        for btn in [self.btn_fast, self.btn_shot, self.btn_calc, self.btn_setting]:
+            if btn == active_btn:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #3A3D5C;
+                        color: white;
+                        font-size: 14px;
+                        border: 2px solid #888;
+                        border-radius: 10px;
+                        min-width: 80px;
+                    }
+                """)
+            else:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #2B2E45;
+                        color: white;
+                        font-size: 14px;
+                        border: 1px solid #444;
+                        border-radius: 10px;
+                        min-width: 80px;
+                    }
+                    QPushButton:hover {
+                        background-color: #3A3D5C;
+                    }
+                """)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

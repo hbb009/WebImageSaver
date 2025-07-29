@@ -47,14 +47,14 @@
 ```bash
 pip install PyQt5 keyboard pyautogui numpy requests flask flask-cors
 
-🚀 启动方式
+## 更新日志
 
-python mainv62.py
+### v6.7
+- 💡 比例计算器页面重新设计
+- 🎨 A/B/C/D 输入框布局调整为居中
+- ✅ 交换按钮与复制按钮前添加说明文字
+- 🛠 修复第三行按钮不显示的 BUG
 
-📁 默认保存路径
-
-图片和截图：~/Pictures/WebImageSaver
-可在界面中通过“浏览”按钮进行自定义
 
 
 
