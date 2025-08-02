@@ -2,6 +2,7 @@
 import os
 import sys
 import threading
+import json
 import requests
 from datetime import datetime
 
@@ -12,22 +13,23 @@ import pyautogui
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
-# PyQt5 - Widgets
-from PyQt5.QtWidgets import (
-    QApplication, QWidget, QLabel, QPushButton, QLineEdit, QFileDialog,
-    QListWidget, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy,
-    QCheckBox, QComboBox, QStackedWidget, QGridLayout
-)
-
 # PyQt5 - Core
 from PyQt5.QtCore import (
     Qt, QTimer, QMimeData, QBuffer, QIODevice, pyqtSignal,
-    QRect, QPoint, QObject
+    QRect, QPoint, QObject, QThread, QSize
 )
 
 # PyQt5 - Gui
 from PyQt5.QtGui import (
     QFont, QIcon, QPixmap, QPainter, QColor, QPen, QImage
+)
+
+# PyQt5 - Widgets
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QLineEdit, QTextEdit, QPushButton, QListWidget, QListWidgetItem,
+    QComboBox, QFileDialog, QListView, QFrame, QSizePolicy,
+    QMessageBox, QStackedWidget, QCheckBox, QSpacerItem
 )
 
 # Flask 服务
@@ -64,6 +66,41 @@ def save_from_url():
 
 def start_flask():
     flask_app.run(port=8787, debug=False, use_reloader=False)
+
+class WorkerThread(QThread):
+    result_ready = pyqtSignal(str)
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, model, messages):
+        super().__init__()
+        self.model = model
+        self.messages = messages
+
+    def run(self):
+        try:
+            url = "http://localhost:11434/api/chat"
+            headers = {"Content-Type": "application/json"}
+            data = {
+                "model": self.model,
+                "messages": self.messages
+            }
+            response = requests.post(url, json=data, headers=headers, stream=True)
+
+            reply_text = ""
+            for line in response.iter_lines():
+                if line:
+                    line = line.decode("utf-8")
+                    try:
+                        data = json.loads(line)
+                        content = data.get("message", {}).get("content", "")
+                        reply_text += content
+                    except json.JSONDecodeError:
+                        pass
+
+            self.result_ready.emit(reply_text)
+
+        except Exception as e:
+            self.error_occurred.emit(str(e))
 
 class ScreenshotSignal(QObject):
     trigger = pyqtSignal()
@@ -148,9 +185,8 @@ class MainApp(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowIcon(QIcon("star.ico"))
-        self.setWindowTitle("桌面助手 v6.7")
-        self.setFixedWidth(600)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowMaximizeButtonHint)
+        self.setWindowTitle("桌面助手 v7.5")
+        self.setFixedSize(960, 640)
 
         self.setFont(QFont("微软雅黑", 14))  # 原字体大小是8-9，提升为12更清晰
         self.setStyleSheet("""
@@ -232,7 +268,7 @@ class MainApp(QWidget):
         self.init_tab_fast_save()
         self.init_tab_screenshot()
         self.init_tab_ratio()
-        self.init_tab_settings()
+        self.init_tab_ollama()  # ← 新增 Ollama 页面
 
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.check_queue)
@@ -243,7 +279,7 @@ class MainApp(QWidget):
         self.btn_fast = QPushButton("速存图文")
         self.btn_shot = QPushButton("截图工具")
         self.btn_calc = QPushButton("比例计算")
-        self.btn_setting = QPushButton("系统设置")
+        self.btn_setting = QPushButton("Ollama助理")
 
         for btn in [self.btn_fast, self.btn_shot, self.btn_calc, self.btn_setting]:
             btn.setFixedHeight(40)
@@ -274,7 +310,8 @@ class MainApp(QWidget):
         self.btn_fast.clicked.connect(lambda: (self.stack.setCurrentIndex(0), self.set_active_button(self.btn_fast)))
         self.btn_shot.clicked.connect(lambda: (self.stack.setCurrentIndex(1), self.set_active_button(self.btn_shot)))
         self.btn_calc.clicked.connect(lambda: (self.stack.setCurrentIndex(2), self.set_active_button(self.btn_calc)))
-        self.btn_setting.clicked.connect(lambda: (self.stack.setCurrentIndex(3), self.set_active_button(self.btn_setting)))
+        self.btn_setting.clicked.connect(lambda: (self.stack.setCurrentIndex(3), self.set_active_button(self.btn_setting)))  # 原设置页（可保留）
+        self.btn_setting.setText("Ollama助理")  # ⬅ 保证按钮名字正确
 
     def init_tab_fast_save(self):
         page = QWidget()
@@ -532,20 +569,6 @@ class MainApp(QWidget):
             w.setStyleSheet("padding: 6px; border-radius: 6px;")
 
         from PyQt5.QtGui import QIntValidator
-
-        self.input_a = QLineEdit(); self.input_a.setPlaceholderText("A")
-        self.input_b = QLineEdit(); self.input_b.setPlaceholderText("B")
-        self.input_c = QLineEdit(); self.input_c.setPlaceholderText("C")
-        self.input_d = QLineEdit(); self.input_d.setPlaceholderText("D")
-        self.input_d.setReadOnly(True)
-        self.input_d.setEnabled(False)
-
-        for i in [self.input_a, self.input_b, self.input_c, self.input_d]:
-            i.setFixedWidth(100)
-            i.setAlignment(Qt.AlignCenter)
-            i.setStyleSheet("font-size: 14px; padding: 6px; border-radius: 6px;")
-
-        from PyQt5.QtGui import QIntValidator
         validator = QIntValidator(0, 99999)
         self.input_a.setValidator(validator)
         self.input_b.setValidator(validator)
@@ -677,12 +700,228 @@ class MainApp(QWidget):
         pixmap.save(buffer, "PNG")
         return buffer.data().data()
 
-    def init_tab_settings(self):
+    def load_models(self):
+        try:
+            response = requests.get("http://localhost:11434/api/tags")
+            if response.status_code == 200:
+                models = response.json().get("models", [])
+                for m in models:
+                    self.model_combo.addItem(m["name"])
+            else:
+                QMessageBox.warning(self, "错误", "无法获取模型列表")
+        except Exception as e:
+            QMessageBox.critical(self, "连接错误", str(e))
+
+    def send_prompt(self):
+        model = self.model_combo.currentText()
+        prompt = self.input_field.toPlainText().strip()
+        print(f"[DEBUG] prompt内容：'{prompt}'")  # ← 加这一行
+        if not prompt:
+            self.status_label.setText("⚠️ 输入为空，未发送")
+            QMessageBox.warning(self, "提示", "请输入提示词")
+            return
+
+        if not self.chat_history:
+            self.chat_history.append({
+                "role": "system",
+                "content": "请你之后都用中文回答我，除非我特别要求你使用英文。"
+            })
+
+        self.status_label.setText("🟡 正在请求模型回应...")
+        QApplication.processEvents()
+        self.input_history.append(prompt)
+
+        if len(self.input_history) > 1:
+            line = QFrame()
+            line.setFrameShape(QFrame.HLine)
+            line.setFrameShadow(QFrame.Sunken)
+            line.setStyleSheet("color: #cccccc; margin-top: 8px; margin-bottom: 12px;")
+            line_item = QListWidgetItem()
+            line_item.setSizeHint(QSize(0, 12))
+            line_item.setFlags(line_item.flags() & ~Qt.ItemIsSelectable)
+            self.chat_list.addItem(line_item)
+            self.chat_list.setItemWidget(line_item, line)
+
+        self.history_index = len(self.input_history)
+        self.input_field.clear()
+        self.add_chat_bubble(prompt, is_user=True)
+        self.chat_list.scrollToBottom()
+
+        self.chat_history.append({"role": "user", "content": prompt})
+        self.worker = WorkerThread(model, self.chat_history)
+        self.worker.result_ready.connect(self.handle_reply)
+        self.worker.error_occurred.connect(self.handle_error)
+        self.worker.start()
+        self.input_field.setFocus()
+
+    def handle_reply(self, reply_text):
+        self.add_chat_bubble(reply_text, is_user=False)
+        self.chat_history.append({"role": "assistant", "content": reply_text})
+        self.chat_list.scrollToBottom()
+        self.status_label.setText("✅ 回答完成")
+
+    def handle_error(self, error_msg):
+        QMessageBox.critical(self, "发送失败", error_msg)
+        self.status_label.setText("❌ 出现错误，请重试")
+
+    def clear_chat(self):
+        self.chat_list.clear()
+        self.chat_history = []
+        self.input_history = []
+        self.history_index = -1
+
+    def load_previous_input(self):
+        if self.input_history and self.history_index > 0:
+            self.history_index -= 1
+            self.input_field.setPlainText(self.input_history[self.history_index])
+        elif self.input_history and self.history_index == 0:
+            self.input_field.setPlainText(self.input_history[0])
+
+    def add_chat_bubble(self, text, is_user):
+        widget = QWidget()
+        label = QLabel(text)
+        label.setWordWrap(True)
+        label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        label.setFont(QFont("微软雅黑", 10))
+        label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        if is_user:
+            label.setFixedWidth(int(self.chat_list.viewport().width() * 0.70))
+            label.setStyleSheet("background-color: #090c24; border-radius: 8px; padding: 6px 10px;")
+        else:
+            label.setFixedWidth(int(self.chat_list.viewport().width() * 0.88))
+
+        outer_layout = QHBoxLayout()
+        outer_layout.setContentsMargins(20, 1, 20, 1)
+        inner_layout = QVBoxLayout()
+        inner_layout.setContentsMargins(0, 0, 0, 0)
+        inner_layout.setSpacing(0)
+        inner_layout.setAlignment(Qt.AlignTop)
+        inner_layout.addWidget(label)
+
+        if is_user:
+            outer_layout.addStretch()
+            outer_layout.addLayout(inner_layout)
+        else:
+            outer_layout.addLayout(inner_layout)
+            outer_layout.addStretch()
+
+        widget.setLayout(outer_layout)
+        item = QListWidgetItem()
+        item.setSizeHint(QSize(widget.sizeHint().width(), label.sizeHint().height() + 4))
+        item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+        self.chat_list.addItem(item)
+        self.chat_list.setItemWidget(item, widget)
+
+    def init_tab_ollama(self):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(20, 20, 20, 20)
-        layout.addWidget(QLabel("【设置】功能开发中..."))
+
+        self.chat_history = []
+        self.input_history = []
+        self.history_index = -1
+
+        # ⬅ 顶部提示 + 模型选择
+        top_row = QHBoxLayout()
+
+        # 左侧：状态提示
+        self.status_label = QLabel("✅ 等待输入中...")
+        self.status_label.setFont(QFont("微软雅黑", 12))
+        self.status_label.setStyleSheet("color: #33cc33;")  # ✅ 放在定义之后
+        top_row.addWidget(self.status_label, stretch=8)
+
+        # 右侧：模型选择框（固定宽度 + 靠右）
+        self.model_combo = QComboBox()
+        self.model_combo.setFixedWidth(180)  # ⬅ 可调
+        top_row.addStretch()
+        top_row.addWidget(self.model_combo)
+
+        layout.addLayout(top_row)
+
+        # 聊天列表
+        self.chat_list = QListWidget()
+        self.chat_list.setMinimumHeight(320)
+        self.chat_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.chat_list.setVerticalScrollMode(QListWidget.ScrollPerPixel)
+        self.chat_list.setWordWrap(True)
+        self.chat_list.setAlternatingRowColors(True)
+        self.chat_list.setSelectionMode(QListWidget.NoSelection)
+        self.chat_list.setFocusPolicy(Qt.NoFocus)
+        self.chat_list.setStyleSheet("QListWidget::item:hover { background: transparent; }")
+        layout.addWidget(self.chat_list)
+
+        # 添加空隙（6像素高）
+        layout.addSpacing(6)
+
+        self.input_field = QTextEdit()
+        self.input_field.setPlaceholderText("请输入问题...")
+        self.input_field.setMinimumHeight(80)
+        self.input_field.installEventFilter(self)
+        layout.addWidget(self.input_field)
+
+        # ⬅ 第2行：按钮横排
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(20)
+        btn_row.setContentsMargins(5, 0, 5, 0)
+
+        self.send_btn = QPushButton("发送")
+        self.send_btn.clicked.connect(self.send_prompt)
+
+        self.up_btn = QPushButton("上条指令")
+        self.up_btn.clicked.connect(self.load_previous_input)
+
+        self.clear_btn = QPushButton("清空对话")
+        self.clear_btn.clicked.connect(self.clear_chat)
+
+        # 三个按钮统一设置尺寸（不使用 setFixedSize）
+        btn_style = """
+            QPushButton {
+                background-color: #2B2E45;
+                color: white;
+                font-size: 14px;
+                border: 2px solid #444;
+                border-radius: 8px;
+                padding: 2px;
+                min-width: 80px;
+                min-height: 30px;
+            }
+        """
+        for btn in [self.send_btn, self.up_btn, self.clear_btn]:
+            btn.setStyleSheet(btn_style)
+
+        # self.send_btn.clicked.connect(self.send_prompt)
+        self.up_btn.clicked.connect(self.load_previous_input)
+        self.clear_btn.clicked.connect(self.clear_chat)
+
+        btn_row.addStretch()
+        btn_row.addWidget(self.send_btn)
+        btn_row.addWidget(self.up_btn)
+        btn_row.addWidget(self.clear_btn)
+        btn_row.addStretch()
+
+        layout.addLayout(btn_row)
+        # layout.addStretch()
+
         self.stack.addWidget(page)
+
+        self.load_models()  # ⬅ 自动加载模型列表
+
+    def eventFilter(self, source, event):
+        if source == self.input_field and event.type() == event.KeyPress:
+            if event.key() == Qt.Key_Return and not (event.modifiers() & Qt.ShiftModifier):
+                self.send_prompt()  # 直接调用，不重复判断
+                return True
+            elif event.key() == Qt.Key_Up:
+                self.load_previous_input()
+                return True
+            elif event.key() == Qt.Key_Down:
+                if self.history_index < len(self.input_history) - 1:
+                    self.history_index += 1
+                    self.input_field.setPlainText(self.input_history[self.history_index])
+                else:
+                    self.input_field.clear()
+                return True
+        return super().eventFilter(source, event)
 
     def set_active_button(self, active_btn):
         # 页面切换时，自动关闭不该启用的功能
