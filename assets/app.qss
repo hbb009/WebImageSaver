@@ -1,0 +1,66 @@
+﻿/* 基础色 */
+QWidget {
+  background-color: #20233A;
+  color: #ffffff;
+  font-family: "微软雅黑";
+}
+
+/* 输入类控件 */
+QLineEdit, QComboBox, QTextEdit {
+  background-color: #2B2E45;
+  color: #ffffff;
+  border: 1px solid #444;
+  border-radius: 6px;
+}
+
+/* 列表 */
+QListWidget {
+  background-color: #2B2E45;
+  color: #ffffff;
+  border: 1px solid #444;
+}
+
+/* 按钮：默认 */
+QPushButton {
+  font-size: 14px;
+  min-height: 34px;
+  border-radius: 8px;
+  background-color: #2B2E45;
+  color: #ffffff;
+  border: 1px solid #444;
+}
+QPushButton:hover {
+  background-color: #3A3D5C;
+}
+
+/* 按钮：主按钮（role=primary） */
+QPushButton[role="primary"] {
+  background-color: #3A3D5C;
+  border: 2px solid #888;
+}
+
+/* 底部导航按钮（role=nav） */
+QPushButton[role="nav"] {
+  min-height: 40px;
+  border-radius: 10px;
+  min-width: 80px;
+}
+
+/* 用户消息气泡 */
+QLabel[userBubble="true"] {
+  background-color: #090c24;
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+
+/* 明确命中顶级窗口（我们在代码里把它命名为 MainRoot） */
+QWidget#MainRoot {
+  background-color: #20233A;
+  color: #ffffff;
+}
+
+/* 兜底：常见顶级容器也一起覆盖 */
+QMainWindow, QDialog, QFrame {
+  background-color: #20233A;
+  color: #ffffff;
+}
