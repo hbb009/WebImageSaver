@@ -72,9 +72,19 @@ class PageRatioCalc(QWidget):
         except: self.d.clear()
         
     def _swap(self):
-        self.a.setText(self.b.text())
-        self.b.setText("")
+        a_txt = self.a.text()
+        b_txt = self.b.text()
+        # 交换时暂时屏蔽信号，避免多次触发计时器
+        self.a.blockSignals(True)
+        self.b.blockSignals(True)
+        self.a.setText(b_txt)
+        self.b.setText(a_txt)
+        self.a.blockSignals(False)
+        self.b.blockSignals(False)
+        # 立即重算并将焦点放回A
+        self._calc()
         self.a.setFocus()
+
     def _copy(self):
         val = self.d.text().split(".")[0]
         from PyQt5.QtCore import QMimeData

@@ -1,4 +1,10 @@
-﻿from styles.common_styles import TEXT_STYLE, BUTTON_STYLE
+﻿import pythoncom
+import win32com.client
+import pyperclip
+from PyQt5.QtWidgets import QShortcut
+from PyQt5.QtGui import QKeySequence
+
+from styles.common_styles import TEXT_STYLE, BUTTON_STYLE
 
 import sys, os
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QStackedWidget, QSizePolicy
@@ -33,7 +39,7 @@ class MainWindow(QWidget):
                 QApplication.instance().setStyleSheet(f.read())
 
         self.setWindowIcon(QIcon(os.path.join(ASSETS_DIR, 'star.ico')))
-        self.setWindowTitle("桌面助手 v8.0")
+        self.setWindowTitle("桌面助手 v8.1")
         self.setFixedSize(960, 640)
         self.setFont(QFont("微软雅黑", 14))
 
