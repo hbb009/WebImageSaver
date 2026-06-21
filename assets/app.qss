@@ -1,66 +1,743 @@
-﻿/* 基础色 */
-QWidget {
-  background-color: #20233A;
-  color: #ffffff;
-  font-family: "微软雅黑";
+/* =========================================================
+   桌面助手 v9.0 — app.qss（精简优化版）
+   设计基色：
+     --bg:        #0b1124
+     --panel:     #141b33
+     --topbar:    #0f1430
+     --border:    #25345c
+     --text:      #d7def7
+     --text-mut:  #9fb0d7
+   ========================================================= */
+
+/* 0) 全局基础 ------------------------------------------------ */
+* {
+  color: #d7def7;
+  font-family: "Microsoft YaHei", "Segoe UI", Arial;
+  font-size: 16px;
 }
 
-/* 输入类控件 */
-QLineEdit, QComboBox, QTextEdit {
-  background-color: #2B2E45;
-  color: #ffffff;
-  border: 1px solid #444;
-  border-radius: 6px;
+/* 所有文本控件：统一透明背景，彻底去掉“汉字底色” */
+QLabel, QTextBrowser, QTextEdit, QPlainTextEdit {
+  background: transparent;
+  border: none;
+  color: #d7def7;
 }
 
-/* 列表 */
-QListWidget {
-  background-color: #2B2E45;
-  color: #ffffff;
-  border: 1px solid #444;
+/* 窗口/视口背景统一深色 */
+QWidget { background: #0b1124; }
+QScrollArea, QAbstractScrollArea { background: #0b1124; }
+
+/* ===== TopBar（替换原有 TopBar 全部相关规则） ===== */
+#TopBar {
+  background: #0f1430;
+  border-bottom: 1px solid #25345c;
 }
 
-/* 按钮：默认 */
+/* 标题：纯文字 */
+#TopBar QLabel#PageTitle {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+  color: #cfe0ff;
+  font-weight: 700;
+  font-size: 18px;
+}
+
+/* 徽章：仅命中打了 role="chip" 的控件 */
+#TopBar [role="chip"] {
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.22);
+  border-radius: 10px;
+  padding: 4px 8px;
+  color: #cfe0ff;
+  font-weight: 600;
+}
+#TopBar [role="chip"]:hover {
+  background: rgba(255,255,255,.10);
+  border-color: rgba(255,255,255,.30);
+}
+
+#ThemeBar {
+  background: #0f1430;
+  border-bottom: 1px solid #25345c;   /* ← 1px */
+}
+
+#ThemeTagline {
+  background: transparent;
+  color: #e6edff;
+  font-weight: 700;
+  font-size: 18px;     /* 口号加大 */
+}
+#ThemeCapsule { background: transparent; border: none; }
+#ThemeCapsuleText {
+  background: transparent;
+  color: #dbe7ff;
+  font-size: 14px;     /* 右侧文案加大 */
+  font-weight: 600;
+}
+#ThemeBar QPushButton#LinkIcon {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 4px;
+  padding: 4px 10px;
+  color: #e6edff;
+  min-height: 28px;
+}
+#ThemeBar QPushButton#LinkIcon:hover {
+  background: rgba(255,255,255,0.10);
+}
+
+/* ===== 普通按钮（全局默认） ===== */
 QPushButton {
-  font-size: 14px;
-  min-height: 34px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.22);
+  color: #cfe0ff;
   border-radius: 8px;
-  background-color: #2B2E45;
-  color: #ffffff;
-  border: 1px solid #444;
+  font-size: 14px;             /* 全局普通按钮字号 */
+  font-weight: 600;
+  padding: 8px 14px;            /* 左右对称，文本自然居中 */
 }
 QPushButton:hover {
-  background-color: #3A3D5C;
+  background: rgba(255,255,255,0.10);
+  border-color: rgba(255,255,255,0.30);
+}
+QPushButton:pressed {
+  background: rgba(255,255,255,0.14);
+  border-color: rgba(255,255,255,0.40);
+}
+QPushButton:disabled {
+  color: rgba(207,224,255,0.45);
+  background: rgba(255,255,255,0.04);
+  border-color: rgba(255,255,255,0.10);
 }
 
-/* 按钮：主按钮（role=primary） */
-QPushButton[role="primary"] {
-  background-color: #3A3D5C;
-  border: 2px solid #888;
+/* 卡片正文：role="card-body"（用于环境信息/版本信息） */
+QLabel[role="card-body"],
+QTextBrowser[role="card-body"],
+QTextEdit[role="card-body"],
+QPlainTextEdit[role="card-body"] {
+  background: transparent;
+  border: none;
+  color: #d7def7;
+  line-height: 1.8;         /* 更舒适的行距 */
 }
 
-/* 底部导航按钮（role=nav） */
-QPushButton[role="nav"] {
-  min-height: 40px;
-  border-radius: 10px;
-  min-width: 80px;
+/* 4) 进度条（资源监控）--------------------------------------
+/* 资源监控：细进度条（条内不显示文字，避免与 8px 细条冲突） */
+QGroupBox#CardRes QProgressBar[variant="thin"] {
+  background: #222a45;            /* 轨道底色 */
+  border: 1px solid #3a4670;      /* 细描边 */
+  border-radius: 4px;             /* 圆角 4px */
+  height: 8px; min-height: 8px; max-height: 8px;
+  padding: 0;                      /* 不做右侧留白，数字改由右侧 QLabel 显示 */
+  qproperty-textVisible: false;    /* 强制条内不显示文字（与代码一致） */
+}
+QGroupBox#CardRes QProgressBar[variant="thin"]::chunk {
+  border-radius: 4px;              /* 条身圆角 */
 }
 
-/* 用户消息气泡 */
-QLabel[userBubble="true"] {
-  background-color: #090c24;
+/* 彩色条 + 右侧留白（64px），避免覆盖数值文字 */
+#BarGpu::chunk   { background: #30c86b;  border-radius: 4px; }  /* GPU使用率：绿 */
+#BarVram::chunk  { background: #3aa0ff;  border-radius: 4px; }  /* 显存：蓝 */
+#BarMem::chunk   { background: #f0a542;  border-radius: 4px; }  /* 内存：橙 */
+#BarCpu::chunk   { background: #9aa0ac;  border-radius: 4px; }  /* CPU：灰 */
+#BarTemp::chunk  { background: #f07f3c;  border-radius: 4px; }  /* 温度：橙红 */
+#BarPower::chunk { background: #9b59b6;  border-radius: 4px; }  /* 功耗：紫 */
+#BarDisk::chunk  { background: #ff6b6b;  border-radius: 4px; }  /* 硬盘：红 */
+
+/* 5) 输入框 / 下拉（保持简单统一）--------------------------- */
+QLineEdit, QPlainTextEdit, QTextEdit, QComboBox {
+  background: #0e1530;
+  border: 1px solid #2a3965;
   border-radius: 8px;
   padding: 6px 10px;
+  selection-background-color: #1f3a8a;
+}
+QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus {
+  border-color: #3b82f6;
+}
+QComboBox QAbstractItemView {
+  background: #0e1530;
+  border: 1px solid #2a3965;
+  outline: none;
+  selection-background-color: #1f3a8a;
+  selection-color: #e6edff;
 }
 
-/* 明确命中顶级窗口（我们在代码里把它命名为 MainRoot） */
-QWidget#MainRoot {
-  background-color: #20233A;
-  color: #ffffff;
+/* 6) 滚动条（极简）------------------------------------------ */
+QScrollBar:vertical, QScrollBar:horizontal {
+  background: transparent;
+  border: none;
+  margin: 0px;
+}
+QScrollBar::handle {
+  background: rgba(255,255,255,0.18);
+  border-radius: 6px;
+}
+QScrollBar::handle:hover {
+  background: rgba(255,255,255,0.30);
+}
+QScrollBar::add-line, QScrollBar::sub-line { height:0; width:0; }
+
+/* ===== SideBar 主菜单按钮（替换旧的 kind="side" 规则） ===== */
+#SideBar QPushButton[kind="side"] {
+  font-size: 16px;
+  font-weight: 700;
+  text-align: center;
+  padding: 6px 0;
+  min-height: 36px;
+  margin: 0;  /* 间距交给布局 spacing 管 */
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.25);
+  color: #cfe0ff;
+  border-radius: 8px;
+}
+#SideBar QPushButton[kind="side"]:hover {
+  background: rgba(255,255,255,.08);
+  border-color: rgba(255,255,255,.35);
+}
+#SideBar QPushButton[kind="side"][active="true"],
+#SideBar QPushButton[kind="side"]:checked {
+  background: rgba(59,130,246,.18);
+  border-color: rgba(59,130,246,.45);
+  color: #eaf2ff;
+}
+#SideBar QPushButton[kind="side"]:disabled {
+  color: rgba(207,224,255,.45);
+  background: rgba(255,255,255,.03);
+  border-color: rgba(255,255,255,.12);
 }
 
-/* 兜底：常见顶级容器也一起覆盖 */
-QMainWindow, QDialog, QFrame {
-  background-color: #20233A;
-  color: #ffffff;
+/* ===== 通用卡片外观（平级：兼容 variant="card" 与 card="1"） ===== */
+/* 说明：FastSave 页面用 variant="card"；Overview 页面用 card="1" */
+QGroupBox[variant="card"], QGroupBox[card="1"] {
+  background: #0f1430;             /* 卡片底色 */
+  border: 1px solid #25345c;       /* 边框色 */
+  border-radius: 8px;              /* 圆角 */
+  margin-top: 20px;                /* 预留标题占位，保持“断线”效果 */
+}
+
+/* 标题布局与默认配色（不要加字体大小到 ::title，上字号应写在本体上） */
+QGroupBox[variant="card"]::title, QGroupBox[card="1"]::title {
+  subcontrol-origin: margin;
+  left: 12px;
+  padding: 4px 8px;
+  background: #0f1430;
+  color: #cfe0ff;                  /* 默认标题文字颜色 */
+  font-weight: 700;
+  /* 不设 font-size；字号交由模板或本体控制 */
+}
+
+/* 绿框：环境信息正文（整段 QLabel/RichText） */
+QGroupBox#CardEnv QLabel,
+QGroupBox#CardEnv QLabel[role="card-body"] {
+  color: #6087BE;   /* 你之前点名的蓝灰；要更灰改 #9AA4B2 */
+}
+
+/* 资源监控：左侧标签与右侧数值，统一透明背景 */
+QGroupBox#CardRes QLabel[role="stat-label"],
+QGroupBox#CardRes QLabel[role="stat-number"] {
+  background: transparent;   /* 关键：透明，去掉你看到的色块 */
+  border: none;               /* 确保没有边框 */
+  padding: 0;                 /* 去内边距，避免看起来像块 */
+  color: #AFC6FF;            /* 保持你现有的颜色（需要更亮可改为 #EAF2FF） */
+  font-weight: 600;
+  font-size: 14px;
+}
+
+/* 版本信息正文（QTextBrowser），与环境信息同色 */
+QGroupBox#CardVer QTextBrowser,
+QGroupBox#CardVer QTextBrowser * {
+  color: #6087BE;
+}
+
+/* ===== FastSave 页面 ===== */
+
+/* 两个分组框：对齐积分计算的 CalcInputBox 样式 */
+QGroupBox#CardFastAuto,
+QGroupBox#CardFastManual {
+  background: #0f1430;
+  border: 1px solid #25345c;
+  border-radius: 10px;
+  margin-top: 14px;
+  padding-top: 8px;
+}
+QGroupBox#CardFastAuto::title,
+QGroupBox#CardFastManual::title {
+  subcontrol-origin: margin;
+  subcontrol-position: top left;
+  left: 14px;
+  padding: 4px 6px;
+  background: #0f1430;
+  color: #9fb0d7;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* 分组内提示文字：对齐 CalcFieldLabel */
+QGroupBox#CardFastAuto QLabel[typo="muted"],
+QGroupBox#CardFastManual QLabel[typo="muted"] {
+  color: #9fb0d7;
+  font-size: 13px;
+  background: transparent;
+}
+
+/* 复选框文字颜色统一 */
+QGroupBox#CardFastAuto QCheckBox,
+QGroupBox#CardFastManual QCheckBox {
+  color: #cfe0ff;
+  font-size: 14px;
+}
+
+/* 路径标题标签 */
+QLabel[typo="h3"] {
+  color: #cfe0ff;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+/* 热键下拉框：对齐 CalcCombo */
+QComboBox#FastSaveHotkey {
+  background: #0e1530;
+  border: 1px solid #2a3965;
+  border-radius: 6px;
+  padding: 4px 8px;
+  min-height: 28px;
+  color: #e8eaf0;
+  font-size: 14px;
+}
+QComboBox#FastSaveHotkey::drop-down { border: none; width: 20px; }
+QComboBox#FastSaveHotkey QAbstractItemView {
+  background: #0e1530;
+  border: 1px solid #2a3965;
+  selection-background-color: #1f3a8a;
+  color: #e8eaf0;
+}
+
+/* 日志列表：对齐历史记录行的颜色体系 */
+QListWidget#FastSaveList {
+  background: #0f1430;
+  border: 1px solid #25345c;
+  border-radius: 8px;
+  color: #9fb0d7;
+}
+QListWidget#FastSaveList::item,
+QListView#FastSaveList::item {
+  padding: 5px 10px;
+  margin: 0;
+  background: transparent;
+  color: #cfe0ff;
+  border-left: 3px solid transparent;
+  border-bottom: 0px solid transparent;
+}
+QListWidget#FastSaveList::item:hover {
+  background: rgba(255,255,255,0.04);
+  border-left-color: #f0a542;
+  border-bottom-color: transparent;
+}
+QListWidget#FastSaveList::item:selected {
+  background: rgba(59,130,246,0.10);
+  border-left-color: #3b82f6;
+  border-bottom-color: transparent;
+}
+
+/* 滚动条尺寸固定 */
+QScrollBar:vertical { width: 10px; }
+QScrollBar:horizontal { height: 10px; }
+QScrollBar::handle { min-height: 24px; }
+
+/* 可选兜底：保证 CardVer 内的文本浏览器永远透明无框 */
+QGroupBox#CardVer QTextBrowser { background: transparent; border: none; }
+
+/* ===== 通用 GroupBox 标准样式（与积分计算对齐）=================== */
+/* 用法：QGroupBox.setProperty("titleVariant","accent") */
+QGroupBox[titleVariant="accent"] {
+    background: #0f1430;
+    border: 1px solid #25345c;
+    border-radius: 10px;
+    margin-top: 14px;
+    padding-top: 8px;
+    font-size: 14px;
+}
+QGroupBox[titleVariant="accent"]::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 14px;
+    padding: 4px 6px;
+    background: #0f1430;
+    color: #9fb0d7;
+    font-size: 12px;
+    font-weight: 600;
+}
+/* 组内控件统一字号，不跟随 GroupBox 本体字号 */
+QGroupBox[titleVariant="accent"] * {
+    font-size: 14px;
+}
+/* 组内 QLabel 透明背景 */
+QGroupBox[titleVariant="accent"] QLabel {
+    background: transparent;
+    color: #cfe0ff;
+}
+/* 组内输入框、下拉对齐全局规则 */
+QGroupBox[titleVariant="accent"] QLineEdit,
+QGroupBox[titleVariant="accent"] QComboBox {
+    background: #0e1530;
+    border: 1px solid #2a3965;
+    border-radius: 6px;
+    padding: 4px 8px;
+    color: #e8eaf0;
+    font-size: 14px;
+}
+QGroupBox[titleVariant="accent"] QLineEdit:focus,
+QGroupBox[titleVariant="accent"] QComboBox:focus {
+    border-color: #3b82f6;
+}
+/* 组内复选框 */
+QGroupBox[titleVariant="accent"] QCheckBox {
+    color: #cfe0ff;
+    background: transparent;
+    font-size: 14px;
+}
+/* 组内列表 */
+QGroupBox[titleVariant="accent"] QListWidget {
+    background: #0b1124;
+    border: 1px solid #25345c;
+    border-radius: 6px;
+    color: #9fb0d7;
+}
+/* 组内进度条轨道 */
+QGroupBox[titleVariant="accent"] QProgressBar {
+    background: #222a45;
+    border: 1px solid #3a4670;
+    border-radius: 4px;
+}
+
+/* 反推页面：模式选择的单选项 —— 字号比正文小2px、用浅绿色 */
+QGroupBox#RevModeBox QRadioButton {
+  /* 正文是 16px，这里设 14px（小2px） */
+  font-size: 14px;                  /* 中文注释：比正文小2px */
+  color: #34D399;                   /* 中文注释：浅绿色（emerald-400），暗底可读 */
+}
+
+/* 可选：选中时稍微亮一点（保留风格统一） */
+QGroupBox#RevModeBox QRadioButton::indicator:checked {
+  /* 仅示意，如果你已有全局radio样式，可不加 */
+}
+
+/* 反推页：图片信息分组内的文本，比正文小 2px（正文 16px -> 14px） */
+QGroupBox#RevImageInfo QLabel {
+  font-size: 14px;            /* 中文：小 2 号 */
+}
+/* ═══════════════════════════════════════════════════════════════
+   积分计算页  page_points_calc.py
+   ═══════════════════════════════════════════════════════════════ */
+
+/* GroupBox 容器 */
+QGroupBox#CalcInputBox,
+QGroupBox#CalcResultBox,
+QGroupBox#RecordsBox {
+    background: #0f1430;
+    border: 1px solid #25345c;
+    border-radius: 10px;
+    margin-top: 14px;
+    padding-top: 8px;
+}
+QGroupBox#CalcInputBox::title,
+QGroupBox#CalcResultBox::title,
+QGroupBox#RecordsBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 14px;
+    padding: 4px 6px;
+    background: #0f1430;
+    color: #9fb0d7;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+/* 输入框（objectName="CalcInput"，不污染全局） */
+QLineEdit#CalcInput {
+    background: #0e1530;
+    border: 1px solid #2a3965;
+    border-radius: 6px;
+    padding: 6px 10px;
+    color: #e8eaf0;
+    font-size: 14px;
+    selection-background-color: #1f3a8a;
+}
+QLineEdit#CalcInput:focus {
+    border-color: #3b82f6;
+}
+
+/* 货币下拉（objectName="CalcCombo"） */
+QComboBox#CalcCombo {
+    background: #0e1530;
+    border: 1px solid #2a3965;
+    border-radius: 6px;
+    padding: 6px 10px;
+    color: #e8eaf0;
+    font-size: 14px;
+}
+QComboBox#CalcCombo::drop-down { border: none; width: 20px; }
+QComboBox#CalcCombo QAbstractItemView {
+    background: #0e1530;
+    border: 1px solid #2a3965;
+    selection-background-color: #1f3a8a;
+    color: #e8eaf0;
+}
+
+/* 月费/年费、生图/生视频 切换按钮（objectName="ToggleBtn"） */
+QPushButton#ToggleBtn {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.22);
+    border-radius: 6px;
+    padding: 6px 18px;
+    color: #9fb0d7;
+    font-size: 14px;
+    font-weight: 600;
+    min-width: 72px;
+}
+QPushButton#ToggleBtn:checked {
+    background: rgba(59,130,246,0.18);
+    border-color: rgba(59,130,246,0.55);
+    color: #eaf2ff;
+    font-weight: 700;
+}
+QPushButton#ToggleBtn:hover:!checked {
+    background: rgba(255,255,255,0.09);
+}
+
+/* 立即计算（objectName="PrimaryCalcBtn"） */
+QPushButton#PrimaryCalcBtn {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                    stop:0 #3a6bc4, stop:1 #5586e0);
+    border: none;
+    border-radius: 8px;
+    padding: 10px 0;
+    color: #ffffff;
+    font-size: 15px;
+    font-weight: 700;
+}
+QPushButton#PrimaryCalcBtn:hover {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                    stop:0 #4a7bd4, stop:1 #6596f0);
+}
+QPushButton#PrimaryCalcBtn:pressed { background: #2d5ab0; }
+
+/* 保存按钮（objectName="SaveBtn"） */
+QPushButton#SaveBtn {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px;
+    padding: 9px 0;
+    color: rgba(207,224,255,0.45);
+    font-size: 14px;
+    font-weight: 600;
+}
+QPushButton#SaveBtn:enabled {
+    background: rgba(60,180,120,0.15);
+    border-color: rgba(60,180,120,0.45);
+    color: #6ddba8;
+}
+QPushButton#SaveBtn:enabled:hover  { background: rgba(60,180,120,0.22); }
+QPushButton#SaveBtn:enabled:pressed{ background: rgba(60,180,120,0.10); }
+
+/* 结果指标卡（精准命中 QFrame，不会污染其他 QWidget） */
+QFrame#MetricCard {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid #25345c;
+    border-radius: 0;
+}
+QFrame#MetricCard QLabel#MetricLabel {
+    background: transparent;
+    color: #9fb0d7;
+    font-size: 12px;
+}
+QFrame#MetricCard QLabel#MetricValue {
+    background: transparent;
+    color: #cfe0ff;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+/* 提示文字 */
+QLabel#ResultHint {
+    color: rgba(255,200,100,0.85);
+    font-size: 13px;
+}
+
+/* 记录滚动区 */
+QScrollArea#RecordsScroll { background: transparent; border: none; }
+QWidget#RecordsContainer  { background: transparent; }
+
+/* 记录卡片 */
+QFrame#RecordCard {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid #25345c;
+    border-radius: 8px;
+}
+QFrame#RecordCard:hover {
+    background: rgba(255,255,255,0.06);
+    border-color: #3a4f7a;
+}
+QLabel#RecordName   { font-size:15px; font-weight:700; color:#cfe0ff; }
+QLabel#RecordDate   { font-size:12px; color:#9fb0d7; }
+QLabel#RecordSub    { font-size:13px; color:#9fb0d7; }
+QLabel#RecordResult { font-size:13px; color:#afc6ff; }
+QLabel#RecordEmpty  { color:#9fb0d7; font-size:14px; padding:40px 0; }
+
+/* 编辑 / 删除按钮 */
+QPushButton#RecordEditBtn {
+    background: rgba(59,130,246,0.12);
+    border: 1px solid rgba(59,130,246,0.35);
+    border-radius: 5px;
+    color: #afc6ff;
+    font-size: 13px;
+    padding: 4px 0;
+    font-weight: 600;
+}
+QPushButton#RecordEditBtn:hover { background: rgba(59,130,246,0.22); }
+QPushButton#RecordDelBtn {
+    background: rgba(255,80,80,0.10);
+    border: 1px solid rgba(255,80,80,0.28);
+    border-radius: 5px;
+    color: #ff9a9a;
+    font-size: 13px;
+    padding: 4px 0;
+    font-weight: 600;
+}
+QPushButton#RecordDelBtn:hover { background: rgba(255,80,80,0.20); }
+
+/* 积分计算页：字段标签 */
+QLabel#CalcFieldLabel {
+    color: #9fb0d7;
+    font-size: 13px;
+}
+
+/* 记录表头 */
+QWidget#RecordHeader {
+    background: rgba(255,255,255,0.03);
+    border-bottom: 1px solid #25345c;
+}
+QLabel#RecordHeaderCell {
+    color: #9fb0d7;
+    font-size: 12px;
+    font-weight: 600;
+}
+/* 表头下分隔线 */
+QFrame#RecordDivider {
+    color: #25345c;
+    background: #25345c;
+    max-height: 1px;
+}
+
+/* 视频时长步进按钮 */
+QPushButton#StepperBtn {
+    font-size: 10px;
+    padding: 0px;
+    min-width: 26px;
+}
+
+/* 秒数显示标签 */
+QLabel#SecsDisplay {
+    border: 1px solid #3a4a6a;
+    border-radius: 4px;
+    font-weight: 600;
+}
+
+/* 计算/重新计算按钮（独立命名，不被其他样式挤压） */
+QPushButton#CalcRunBtn {
+    font-size: 13px;
+    font-weight: 600;
+    padding: 0 12px;
+    min-width: 90px;
+}
+
+/* 历史记录双数行加深背景 */
+QFrame#RecordCardAlt {
+    background-color: rgba(255, 255, 255, 0.04);
+}
+
+
+
+
+/* ===== 侧边栏勾选开关 LED ===== */
+/* 普通侧边按钮统一高度（含有 LED 的按钮现已改为绝对定位，不再用容器包裹） */
+#SideBar QPushButton[kind="side"] {
+    min-height: 44px;
+    max-height: 44px;
+}
+/* LED 勾选开关：默认空圆圈，选中显示勾 */
+QPushButton#SideLed {
+    background: transparent;
+    border: 1.5px solid rgba(255,255,255,0.25);
+    border-radius: 4px;
+    min-width: 18px;
+    max-width: 18px;
+    min-height: 18px;
+    max-height: 18px;
+    padding: 0;
+    color: transparent;
+    font-size: 12px;
+    font-weight: 700;
+}
+QPushButton#SideLed:checked {
+    background: rgba(59,130,246,0.20);
+    border-color: rgba(59,130,246,0.70);
+    color: #60a5fa;
+}
+QPushButton#SideLed:hover:!checked {
+    border-color: rgba(255,255,255,0.45);
+    background: rgba(255,255,255,0.06);
+}
+
+/* ===== v9.5 新增 ===== */
+
+/* Ollama 对话页：用户气泡（颜色跟随主题，不再硬编码于 Python 代码）*/
+QLabel#ChatBubbleUser {
+    background: #0e1530;
+    border: 1px solid #2a3965;
+    border-radius: 8px;
+    padding: 6px 10px;
+}
+
+/* 批量打标：进度条 */
+QProgressBar {
+    background: #0e1530;
+    border: 1px solid #2a3965;
+    border-radius: 6px;
+    height: 12px;
+    text-align: center;
+    color: #d7def7;
+    font-size: 12px;
+}
+QProgressBar::chunk {
+    background: #3b82f6;
+    border-radius: 5px;
+}
+
+/* 反推页：强制视觉复选框 */
+QCheckBox#ForceVisionCheck {
+    color: #f0a542;
+    font-size: 13px;
+}
+
+/* 批量打标 GroupBox 标题 */
+QGroupBox#BatchModelBox {
+    background: #0f1430;
+    border: 1px solid #25345c;
+    border-radius: 8px;
+    margin-top: 14px;
+}
+QGroupBox#BatchModelBox::title {
+    subcontrol-origin: margin;
+    left: 14px;
+    padding: 4px 6px;
+    background: #0f1430;
+    color: #9fb0d7;
+    font-size: 12px;
+    font-weight: 600;
 }

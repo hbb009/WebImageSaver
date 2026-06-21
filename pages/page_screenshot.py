@@ -1,4 +1,4 @@
-﻿from styles.common_styles import TEXT_STYLE, BUTTON_STYLE, LINEEDIT_STYLE
+from styles.common_styles import TEXT_STYLE, BUTTON_STYLE, LINEEDIT_STYLE
 
 import os
 from PyQt5.QtWidgets import (
@@ -90,13 +90,24 @@ class PageScreenshot(QWidget):
 
         # 左侧文件列表
         self.list = QListWidget()
-        self.list.setFixedHeight(400)  # 你想要的高度
-        r3.addWidget(self.list, 3)     # 左边占比3
+        self.list.setObjectName("ShotList")                         # 供QSS或后续扩展精准命中
+        self.list.setFixedHeight(480)                               # 统一高度
+        self.list.setAttribute(Qt.WA_StyledBackground, True)        # 启用样式化背景（避免继承父级底色异常）
+        self.list.setStyleSheet("QListWidget{color:#9fb0d7;}")      # 与速存页一致的文字颜色
+        self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)  # 纵向常显，避免宽度抖动
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.list.setUniformItemSizes(True)                         # 统一项高，提升性能与一致性
+        r3.addWidget(self.list, 3, alignment=Qt.AlignTop)           # 顶部对齐（你之前的要求）
+
+        # —— 页面打开：写入“初始路径 / 空闲状态”日志 —— 
+        ensure_dir(self.path.text())                                   # 确保初始保存目录存在
+        self.list.addItem(f"📁 初始路径：{self.path.text()}")            # 记录初始路径
+        self.list.addItem("⏹️ 当前截图监听未启用（空闲）")                # 记录初始状态（未启用）
 
         right_col = QVBoxLayout(); r3.addLayout(right_col, 1)
 
         gb_mod = QGroupBox("组合键")
-        gb_mod.setStyleSheet(TEXT_STYLE)
+        gb_mod.setProperty("titleVariant", "accent")  # ✅ 套用通用标题模板（浅蓝标题 + 18px）
         vb_mod = QVBoxLayout(gb_mod)
 
         # 组合键（修饰键）
@@ -115,11 +126,6 @@ class PageScreenshot(QWidget):
         right_col.addWidget(gb_mod)
         right_col.addStretch()
 
-        # 行4：状态栏
-        self.label_status = QLabel("当前截图监听未启用")
-        self.label_status.setStyleSheet(TEXT_STYLE)
-        lay.addWidget(self.label_status)
-
         # 信号与监听
         self._sig = _Signal()
         self._sig.trigger.connect(self._show_overlay)
@@ -137,14 +143,17 @@ class PageScreenshot(QWidget):
     # === 事件 ===
     def _choose_dir(self):
         d = QFileDialog.getExistingDirectory(self, "选择截图保存文件夹")
-        if d: self.path.setText(d)
+        if d:
+            self.path.setText(d)
+            ensure_dir(d)                                          # 确保可写
+            self.list.addItem(f"📁 保存路径切换为：{d}")             # 日志
 
     def _toggle(self, st):
         if st == Qt.Checked:
-            self.label_status.setText(f"截图监听已启用（等待快捷键：{self.hotkey.upper()}）")
+            self.list.addItem(f"🟢 截图监听已启用（等待：{self.hotkey.upper()}）")  # 日志
             self._bind_hotkey()
         else:
-            self.label_status.setText("当前截图监听未启用")
+            self.list.addItem("⏹️ 已停止截图监听（空闲）")                          # 日志
             self._unbind_hotkey()
 
     # === 热键 ===
@@ -155,18 +164,12 @@ class PageScreenshot(QWidget):
         key = name_map.get(key, key).lower()
         return f"{mod}+{key}"
 
-    def _on_hotkey_changed(self, *_):
-        self.hotkey = self._current_hotkey()
-        if self.checkbox_enable.isChecked():
-            self._bind_hotkey()
-            self.label_status.setText(f"快捷键已设置为：{self.hotkey.upper()}")
-
     def _bind_hotkey(self):
         self._unbind_hotkey()
         try:
             self._hotkey_handler = keyboard.add_hotkey(self.hotkey, lambda: self._sig.trigger.emit())
         except Exception as e:
-            print("热键注册失败：", e)
+            self.list.addItem(f"❌ 热键注册失败：{e}")                     # 记录到列表
 
     def _unbind_hotkey(self):
         try:
@@ -178,27 +181,40 @@ class PageScreenshot(QWidget):
 
     # === 截图 ===
     def _show_overlay(self):
-        self.list.addItem("🔥 热键已触发")
-        self.overlay = Overlay(self._capture, lambda: self.label_status.setText("❌ 截图已取消"))
+        self.list.addItem("🔥 热键已触发")  # 保留
+        self.overlay = Overlay(
+            self._capture,
+            lambda: self.list.addItem("❌ 截图已取消")  # ✅ 简洁：单表达式回调
+        )
 
     def _capture(self, rect):
         if rect.width() < 10 or rect.height() < 10:
-            self.label_status.setText("❗ 选区太小，已取消")
-            return        ensure_dir(self.path.text())
+            self.list.addItem("⚠️ 选区太小，已取消")                       # 写入列表
+            return
+
+        ensure_dir(self.path.text())                                      # 先确保目录存在
         from datetime import datetime
         name = f"screenshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
         full = os.path.join(self.path.text(), name)
         try:
+            # 截取所选矩形区域并保存到目标路径
             img = pyautogui.screenshot(region=(rect.x(), rect.y(), rect.width(), rect.height()))
             img.save(full)
-            self.list.addItem(f"📸 {name}")
-            self.label_status.setText("✅ 截图完成")
-        except Exception:
-            self.label_status.setText("❌ 截图失败")
+            self.list.addItem(f"📸 已保存：{full}")  # ✅ 成功日志（显示完整路径）
+        except Exception as e:
+            # ✅ 失败日志（包含异常类型与信息）
+            self.list.addItem(f"❌ 保存失败：{type(e).__name__}: {e}")
 
     def ensure_stopped(self):
         if self.checkbox_enable.isChecked():
             self.checkbox_enable.setChecked(False)
         self._unbind_hotkey()
-        self.label_status.setText("当前截图监听未启用")  # ← 新增
+
+    # 保留的版本（下方这个）：修改快捷键时，既重绑又写入列表日志
+    def _on_hotkey_changed(self, *_):
+        self.hotkey = self._current_hotkey()
+        if self.checkbox_enable.isChecked():
+            self._bind_hotkey()
+            self.list.addItem(f"⌨️ 快捷键切换为：{self.hotkey.upper()}")   # ★ 写入列表日志
+
 

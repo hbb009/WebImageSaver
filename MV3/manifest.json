@@ -1,0 +1,21 @@
+{
+  "name": "Hover Image Saver (No-Port)",
+  "manifest_version": 3,
+  "version": "1.0.0",
+  "permissions": [ "downloads", "storage", "activeTab", "scripting" ],
+  "host_permissions": [ "<all_urls>" ],
+  "background": { "service_worker": "background.js" },
+  "commands": {
+    "save-hover-image": {
+      "suggested_key": { "default": "Alt+1" },
+      "description": "Save image under cursor"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [ "<all_urls>" ],
+      "js": [ "content.js" ],
+      "run_at": "document_start"
+    }
+  ]
+}
