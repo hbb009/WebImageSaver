@@ -192,6 +192,14 @@ class MainWindow(QWidget):
         self.led_fast.setCursor(Qt.PointingHandCursor)
         self.led_fast.setToolTip("速存图片：点击开/关")
 
+        self.led_fast_txt = QPushButton("✓")
+        self.led_fast_txt.setObjectName("SideLed")
+        self.led_fast_txt.setCheckable(True)
+        self.led_fast_txt.setChecked(False)
+        self.led_fast_txt.setFixedSize(18, 18)
+        self.led_fast_txt.setCursor(Qt.PointingHandCursor)
+        self.led_fast_txt.setToolTip("速存文本：点击开/关")
+
         self.led_shot = QPushButton("✓")
         self.led_shot.setObjectName("SideLed")
         self.led_shot.setCheckable(True)
@@ -214,6 +222,8 @@ class MainWindow(QWidget):
         # 实际位置在 _reposition_leds() 里计算，窗口 show 后调用一次
         self.led_fast.setParent(self.side_wrap)
         self.led_fast.raise_()
+        self.led_fast_txt.setParent(self.side_wrap)
+        self.led_fast_txt.raise_()
         self.led_shot.setParent(self.side_wrap)
         self.led_shot.raise_()
 
@@ -258,11 +268,16 @@ class MainWindow(QWidget):
 
         # LED 开关：速存图片
         self.led_fast.clicked.connect(self._toggle_fast_led)
+        # LED 开关：速存文本
+        self.led_fast_txt.clicked.connect(self._toggle_fast_txt_led)
         # LED 开关：截图监听
         self.led_shot.clicked.connect(self._toggle_shot_led)
         # 让速存页状态变化时同步 LED
         self.page_fast.chk_imgonly.toggled.connect(
             lambda checked: self.led_fast.setChecked(checked)
+        )
+        self.page_fast.chk_manual.toggled.connect(
+            lambda checked: self.led_fast_txt.setChecked(checked)
         )
         self.page_shot.checkbox_enable.toggled.connect(
             lambda checked: self.led_shot.setChecked(checked)
@@ -290,6 +305,11 @@ class MainWindow(QWidget):
         target = not self.page_fast.chk_imgonly.isChecked()
         self.page_fast.chk_imgonly.setChecked(target)
 
+    def _toggle_fast_txt_led(self):
+        """点击 LED 直接切换速存文本开关，不需要先切换到该页面"""
+        target = not self.page_fast.chk_manual.isChecked()
+        self.page_fast.chk_manual.setChecked(target)
+
     def _toggle_shot_led(self):
         """点击 LED 直接切换截图监听开关"""
         target = not self.page_shot.checkbox_enable.isChecked()
@@ -305,16 +325,25 @@ class MainWindow(QWidget):
     def _reposition_leds(self):
         """把 LED 绝对定位到对应按钮的右侧中央（side_wrap 坐标系）"""
         led_w, led_h = 18, 18
+        gap = 3            # 两个 LED 之间的间距
         margin_right = 6   # 距按钮右边缘的间距
 
-        for btn, led in ((self.btn_fast, self.led_fast),
-                         (self.btn_shot, self.led_shot)):
-            # 把按钮坐标映射到 side_wrap 坐标系
-            pos = btn.mapTo(self.side_wrap, btn.rect().topRight())
-            x = pos.x() - led_w - margin_right
-            y = pos.y() + (btn.height() - led_h) // 2
-            led.move(x, y)
-            led.raise_()
+        # btn_fast 有两个 LED：led_fast（图片）在右，led_fast_txt（文本）在最右
+        pos = self.btn_fast.mapTo(self.side_wrap, self.btn_fast.rect().topRight())
+        y   = pos.y() + (self.btn_fast.height() - led_h) // 2
+        x2  = pos.x() - led_w - margin_right          # led_fast_txt 最右
+        x1  = x2 - led_w - gap                         # led_fast 在其左侧
+        self.led_fast.move(x1, y)
+        self.led_fast.raise_()
+        self.led_fast_txt.move(x2, y)
+        self.led_fast_txt.raise_()
+
+        # btn_shot 只有一个 LED
+        pos = self.btn_shot.mapTo(self.side_wrap, self.btn_shot.rect().topRight())
+        x = pos.x() - led_w - margin_right
+        y = pos.y() + (self.btn_shot.height() - led_h) // 2
+        self.led_shot.move(x, y)
+        self.led_shot.raise_()
 
     def showEvent(self, event):
         super().showEvent(event)

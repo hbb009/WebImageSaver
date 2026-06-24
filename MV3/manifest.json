@@ -1,14 +1,15 @@
 {
   "name": "Hover Image Saver (No-Port)",
   "manifest_version": 3,
-  "version": "1.0.0",
-  "permissions": [ "downloads", "storage", "activeTab", "scripting" ],
+  "version": "1.3.0",
+  "description": "一键保存鼠标下方图片，配合桌面助手使用",
+  "permissions": [ "downloads", "activeTab", "scripting", "tabs" ],
   "host_permissions": [ "<all_urls>" ],
   "background": { "service_worker": "background.js" },
   "commands": {
     "save-hover-image": {
       "suggested_key": { "default": "Alt+1" },
-      "description": "Save image under cursor"
+      "description": "保存光标下的图片"
     }
   },
   "content_scripts": [

@@ -17,7 +17,7 @@ def start_server_thread(page_fast):
 
     @app.route('/save', methods=['POST'])
     def save_from_url():
-        if _fast_page_ref is None or not _fast_page_ref.allow_accept():
+        if True:  # 已不使用插件推送
             return jsonify({"status":"ignored"})
         data = request.json or {}
         url = data.get("url")

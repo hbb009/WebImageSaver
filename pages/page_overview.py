@@ -143,52 +143,51 @@ class PageOverview(QWidget):
         ver.setProperty("role", "card-body")
 
         ver.setHtml('''
-        <h3>🆕 v9.5 更新亮点</h3>
+        <h3>🆕 v9.5 核心功能模块</h3>
 
-        <h4>🎨 样式体系统一（<code>assets/app.qss</code>）</h4>
+        <h4>🖥️ 系统总览</h4>
         <ul>
-          <li><b>废弃 common_styles.py</b>：全部样式集中到 <code>app.qss</code>，所有页面不再使用 <code>setStyleSheet(TEXT_STYLE/BUTTON_STYLE)</code>，消除样式冲突。</li>
-          <li><b>通用 GroupBox 标准</b>：<code>QGroupBox[titleVariant="accent"]</code> 统一深色底 <code>#0f1430</code>、边框 <code>#25345c</code>、圆角 10px、小字灰色标题，所有页面自动对齐积分计算风格。</li>
-          <li><b>结果指标卡</b>：<code>QFrame#MetricCard</code> 精准选择器，修复计算结果区文字后的深色背景框问题。</li>
+          <li>实时监控设备硬件状态，包括 CPU、内存、GPU（使用率/显存/温度/功耗）。</li>
         </ul>
 
-        <h4>🖼️ 速存图文（<code>pages/page_fast_save.py</code>）</h4>
+        <h4>📥 速存图文</h4>
         <ul>
-          <li><b>后台持续运行</b>：切换页面不再自动关闭速存/截图功能，保持后台工作。</li>
-          <li><b>侧边栏快捷开关</b>：速存图文、截图工具按钮右侧增加勾选开关（✓），无需切换页面即可直接开启/关闭。</li>
-          <li><b>提示文字修正</b>：快捷键说明由"Ctrl+Alt+7"更正为"Alt+1"；文本快捷键说明加入"可改为 F5～F8"提示。</li>
-          <li><b>界面对齐积分计算</b>：两个分组框样式统一，日志列表颜色与主题色板一致。</li>
+          <li>后台静默监听，通过全局快捷键（如 Alt+1、F7）一键将剪贴板文本或图片直存至预设本地目录。</li>
         </ul>
 
-        <h4>🔍 反推提示词（<code>pages/page_rev_prompt.py</code>）</h4>
+        <h4>🧮 积分计算</h4>
         <ul>
-          <li><b>修复崩溃</b>：补充 <code>QFileDialog</code> import，消除点击"选择图片"时的 NameError。</li>
-          <li><b>视觉模型识别升级</b>：新增 <code>/api/show</code> API 检测 modelfile，回退名字匹配新增 gemma3、phi4-vision、molmo、pixtral、cogvlm2 等 15+ 模型。</li>
-          <li><b>强制发送图片</b>：新增"强制发送图片"复选框，绕过名字匹配，适配名字不规范的视觉模型。</li>
-          <li><b>流式输出</b>：生成过程实时逐字追加，新增"复制"按钮与"刷新模型"按钮。</li>
-          <li><b>移除中文框</b>：界面简化，仅保留英文输出框。</li>
+          <li>AI 平台订阅成本核算器。输入平台费用及获取积分，自动折算单次生图或单秒视频的精确人民币成本，并支持历史记录保存。</li>
         </ul>
 
-        <h4>🏷️ 批量打标（<code>pages/page_batch_tag.py</code>）</h4>
+        <h4>✂️ 截图工具</h4>
         <ul>
-          <li><b>真实打标</b>：接入 Ollama 视觉模型，支持 Booru 标签 / SD 提示词 / 中英文描述 5 种模板。</li>
-          <li><b>进度条 + 停止</b>：新增实时进度显示与停止按钮。</li>
+          <li>支持自定义组合热键（如 Ctrl+Shift+A），框选屏幕区域并自动保存到指定文件夹。</li>
         </ul>
 
-        <h4>📐 比例计算（<code>pages/page_ratio_calc.py</code>）</h4>
+        <h4>📐 比例计算</h4>
         <ul>
-          <li><b>像素预设</b>：比例按钮绑定 AI 生图常用像素值（长边 1536），点击自动填入 C 并计算 D；Tooltip 显示具体像素尺寸（如 1536×864）。</li>
+          <li>内置 1:1、16:9、21:9 等 8 种 AI 常用画幅预设；支持输入基准像素（如长边 1536），自动换算确切的宽/高数值。</li>
         </ul>
 
-        <h4>🧩 Ollama 助理（<code>pages/page_ollama.py</code>）</h4>
+        <h4>🔍 反推提示词</h4>
         <ul>
-          <li>移除旧样式 import，气泡颜色由 <code>app.qss</code> 统一管理。</li>
+          <li>单图拖拽反推。接入本地 Ollama 视觉模型（支持 gemma3、phi4-vision 等），内置 9 种英文 Prompt 输出模式（如 Booru、Midjourney 风格），流式生成结果。</li>
         </ul>
 
-        <h4>🗑️ 清理</h4>
+        <h4>🏷️ 批量打标</h4>
         <ul>
-          <li>删除无用文件：<code>app.py</code>（Streamlit）、<code>image_role_classifier_gui.py</code>（tkinter）、<code>v9.4/</code> 历史目录。</li>
-          <li><code>mainv92.py</code> 入口版本号更新为 v9.5。</li>
+          <li>对指定本地文件夹的图片进行自动化批量分析，调用视觉模型生成 SD/Booru 格式的 <code>.txt</code> 标签文件，带实时进度监控。</li>
+        </ul>
+
+        <h4>🤖 Ollama 助理</h4>
+        <ul>
+          <li>简易的本地 LLM 对话窗口，支持流式文本交互。</li>
+        </ul>
+
+        <h4>🧩 浏览器扩展 (MV3)</h4>
+        <ul>
+          <li>配合“速存图文”使用，将 <code>MV3/</code> 目录加载至 Chrome 浏览器，可增强网页图片保存的兼容性（可选组件）。</li>
         </ul>
         ''')
         _ver_box.addWidget(ver)
