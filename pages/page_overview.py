@@ -7,6 +7,140 @@ from PyQt5.QtWidgets import (
 )
 import platform, shutil, sys, subprocess
 
+_IS_WIN = sys.platform.startswith("win")
+
+
+# ══════════════ Windows 集成显卡利用率（PDH 性能计数器） ══════════════
+# 说明：nvidia-smi 只适用于 NVIDIA 独显。笔记本常见的 Intel/AMD 集显读不到数据，
+# 会导致“资源监控”里 GPU 相关几项全空。这里用 Windows 自带的性能计数器
+# “\GPU Engine(*)\Utilization Percentage” 读取任意厂商 GPU 的利用率作为兜底。
+# 全程 try/except 包裹，任何异常都安全退回 None，绝不影响主界面刷新。
+if _IS_WIN:
+    import ctypes
+    from ctypes import wintypes
+
+    class _PDH_UNION(ctypes.Union):
+        _fields_ = [
+            ("longValue", ctypes.c_long),
+            ("doubleValue", ctypes.c_double),
+            ("largeValue", ctypes.c_longlong),
+            ("AnsiStringValue", ctypes.c_char_p),
+            ("WideStringValue", ctypes.c_wchar_p),
+        ]
+
+    class _PDH_FMT_COUNTERVALUE(ctypes.Structure):
+        _fields_ = [("CStatus", wintypes.DWORD), ("value", _PDH_UNION)]
+
+    class _PDH_FMT_COUNTERVALUE_ITEM_W(ctypes.Structure):
+        _fields_ = [("szName", ctypes.c_wchar_p),
+                    ("FmtValue", _PDH_FMT_COUNTERVALUE)]
+
+    _PDH_FMT_DOUBLE = 0x00000200
+
+    class _PdhGpu:
+        """读取整机 GPU 利用率（取各引擎实例的最大值，近似任务管理器口径）。"""
+        def __init__(self):
+            self._ok = False
+            self.hq = None
+            try:
+                self.pdh = ctypes.WinDLL("pdh")
+                self.hq = wintypes.HANDLE()
+                if self.pdh.PdhOpenQueryW(None, 0, ctypes.byref(self.hq)) != 0:
+                    return
+                self.counter = wintypes.HANDLE()
+                path = r"\GPU Engine(*)\Utilization Percentage"
+                if self.pdh.PdhAddEnglishCounterW(
+                        self.hq, path, 0, ctypes.byref(self.counter)) != 0:
+                    return
+                # 首次采样（计数器需要两次采样才能计算）
+                self.pdh.PdhCollectQueryData(self.hq)
+                self._ok = True
+            except Exception:
+                self._ok = False
+
+        def read(self):
+            if not self._ok:
+                return None
+            try:
+                if self.pdh.PdhCollectQueryData(self.hq) != 0:
+                    return None
+                size = wintypes.DWORD(0)
+                count = wintypes.DWORD(0)
+                # 第一次调用取所需缓冲区大小
+                self.pdh.PdhGetFormattedCounterArrayW(
+                    self.counter, _PDH_FMT_DOUBLE,
+                    ctypes.byref(size), ctypes.byref(count), None)
+                if size.value == 0 or count.value == 0:
+                    return None
+                buf = ctypes.create_string_buffer(size.value)
+                if self.pdh.PdhGetFormattedCounterArrayW(
+                        self.counter, _PDH_FMT_DOUBLE,
+                        ctypes.byref(size), ctypes.byref(count), buf) != 0:
+                    return None
+                item_sz = ctypes.sizeof(_PDH_FMT_COUNTERVALUE_ITEM_W)
+                # 防越界：以缓冲区实际容量为准
+                safe_n = min(count.value, size.value // item_sz)
+                best = 0.0
+                for i in range(safe_n):
+                    item = _PDH_FMT_COUNTERVALUE_ITEM_W.from_buffer(buf, i * item_sz)
+                    v = item.FmtValue.value.doubleValue
+                    if v == v and v > best:   # 过滤 NaN
+                        best = v
+                return max(0, min(100, int(round(best))))
+            except Exception:
+                return None
+
+
+def _detect_gpu_name():
+    """返回主显卡名称（用于占位提示），失败返回空串。仅 Windows。"""
+    if not _IS_WIN:
+        return ""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class DISPLAY_DEVICEW(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("DeviceName", wintypes.WCHAR * 32),
+                ("DeviceString", wintypes.WCHAR * 128),
+                ("StateFlags", wintypes.DWORD),
+                ("DeviceID", wintypes.WCHAR * 128),
+                ("DeviceKey", wintypes.WCHAR * 128),
+            ]
+        i = 0
+        names = []
+        while True:
+            dd = DISPLAY_DEVICEW()
+            dd.cb = ctypes.sizeof(dd)
+            if not ctypes.windll.user32.EnumDisplayDevicesW(None, i, ctypes.byref(dd), 0):
+                break
+            s = dd.DeviceString.strip()
+            if s and s not in names:
+                names.append(s)
+            i += 1
+            if i > 16:
+                break
+        return names[0] if names else ""
+    except Exception:
+        return ""
+
+
+def _detect_cpu_name():
+    """从注册表读取友好的 CPU 名称（比 platform.processor() 更可读）。仅 Windows。"""
+    if not _IS_WIN:
+        return ""
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+        val, _ = winreg.QueryValueEx(key, "ProcessorNameString")
+        winreg.CloseKey(key)
+        return (val or "").strip()
+    except Exception:
+        return ""
+
 def make_card(title: str):
     box = QGroupBox(title)
     box.setProperty("variant", "card")            # 用属性做“卡片”样式钩子
@@ -122,6 +256,23 @@ class PageOverview(QWidget):
         self.bar_power, self.txt_power = meter_row("GPU功耗：");    self.bar_power.setObjectName("BarPower")
         self.bar_disk,  self.txt_disk  = meter_row("硬盘使用：");   self.bar_disk.setObjectName("BarDisk")
 
+        # 集显利用率读取器（仅 Windows 且无 NVIDIA 时兜底使用）
+        self._pdh_gpu = None
+        if _IS_WIN:
+            try:
+                self._pdh_gpu = _PdhGpu()
+            except Exception:
+                self._pdh_gpu = None
+
+        # 检测显卡名称，供占位提示更友好
+        self._gpu_name = _detect_gpu_name()
+        gpu_tip = self._gpu_name or "显卡"
+        self.txt_gpu.setToolTip(gpu_tip)
+        # 集显通常无法读取显存/温度/功耗，给出说明性提示，避免误以为是 Bug
+        na_tip = f"{gpu_tip}：集成显卡或非 NVIDIA 设备通常无法读取该指标"
+        for lab in (self.txt_vram, self.txt_temp, self.txt_power):
+            lab.setToolTip(na_tip)
+
         # 版本信息 —— 裸 QGroupBox + TEXT_STYLE（与“速存图文”一致）
         card_ver = QGroupBox("版本信息")
         card_ver.setObjectName("CardVer")
@@ -142,54 +293,10 @@ class PageOverview(QWidget):
         # ✅ 与环境信息一致，使用“卡片正文”钩子，走同一套透明背景/文字色
         ver.setProperty("role", "card-body")
 
-        ver.setHtml('''
-        <h3>🆕 v9.5 核心功能模块</h3>
+        # 🆕 版本信息内容改为读取项目根目录的 README.md（Markdown 原生渲染）
+        self.ver = ver
+        self._load_readme()
 
-        <h4>🖥️ 系统总览</h4>
-        <ul>
-          <li>实时监控设备硬件状态，包括 CPU、内存、GPU（使用率/显存/温度/功耗）。</li>
-        </ul>
-
-        <h4>📥 速存图文</h4>
-        <ul>
-          <li>后台静默监听，通过全局快捷键（如 Alt+1、F7）一键将剪贴板文本或图片直存至预设本地目录。</li>
-        </ul>
-
-        <h4>🧮 积分计算</h4>
-        <ul>
-          <li>AI 平台订阅成本核算器。输入平台费用及获取积分，自动折算单次生图或单秒视频的精确人民币成本，并支持历史记录保存。</li>
-        </ul>
-
-        <h4>✂️ 截图工具</h4>
-        <ul>
-          <li>支持自定义组合热键（如 Ctrl+Shift+A），框选屏幕区域并自动保存到指定文件夹。</li>
-        </ul>
-
-        <h4>📐 比例计算</h4>
-        <ul>
-          <li>内置 1:1、16:9、21:9 等 8 种 AI 常用画幅预设；支持输入基准像素（如长边 1536），自动换算确切的宽/高数值。</li>
-        </ul>
-
-        <h4>🔍 反推提示词</h4>
-        <ul>
-          <li>单图拖拽反推。接入本地 Ollama 视觉模型（支持 gemma3、phi4-vision 等），内置 9 种英文 Prompt 输出模式（如 Booru、Midjourney 风格），流式生成结果。</li>
-        </ul>
-
-        <h4>🏷️ 批量打标</h4>
-        <ul>
-          <li>对指定本地文件夹的图片进行自动化批量分析，调用视觉模型生成 SD/Booru 格式的 <code>.txt</code> 标签文件，带实时进度监控。</li>
-        </ul>
-
-        <h4>🤖 Ollama 助理</h4>
-        <ul>
-          <li>简易的本地 LLM 对话窗口，支持流式文本交互。</li>
-        </ul>
-
-        <h4>🧩 浏览器扩展 (MV3)</h4>
-        <ul>
-          <li>配合“速存图文”使用，将 <code>MV3/</code> 目录加载至 Chrome 浏览器，可增强网页图片保存的兼容性（可选组件）。</li>
-        </ul>
-        ''')
         _ver_box.addWidget(ver)
 
         # 定时刷新（每 1s）
@@ -203,7 +310,7 @@ class PageOverview(QWidget):
         from pathlib import Path
 
         node = platform.node() or "Unknown"
-        cpu  = platform.processor() or platform.uname().processor or "Unknown CPU"
+        cpu  = _detect_cpu_name() or platform.processor() or platform.uname().processor or "Unknown CPU"
         ram_gb = round(psutil.virtual_memory().total / (1024**3))
         arch = platform.machine() or "x64"
         sys_release = platform.win32_ver()[1] or platform.release()
@@ -234,6 +341,38 @@ class PageOverview(QWidget):
       <b>磁盘空间：</b>{disk_line}
     </div>
     """.strip()
+
+    def _load_readme(self):
+        """读取项目根目录下的 README.md，用 Markdown 原生渲染到“版本信息”面板。
+        找不到文件或读取失败时给出友好提示，绝不抛异常中断界面。"""
+        import os, sys
+
+        # 兼容：源码运行（本文件在 pages/，README 在上一级）/ PyInstaller 打包 / 从根目录运行
+        here = os.path.dirname(os.path.abspath(__file__))
+        root = os.path.dirname(here)
+        candidates = []
+        meipass = getattr(sys, "_MEIPASS", None)
+        for base in (meipass, root, here, os.getcwd()):
+            if base:
+                candidates.append(os.path.join(base, "README.md"))
+
+        path = next((p for p in candidates if os.path.exists(p)), None)
+        if not path:
+            self.ver.setPlainText("⚠️ 未找到 README.md，请确认它在项目根目录。")
+            return
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+        except Exception as e:
+            self.ver.setPlainText(f"⚠️ 读取 README.md 失败：{e}")
+            return
+
+        # Qt 5.14+ 的 QTextBrowser 原生支持 Markdown；旧版本兼底为纯文本
+        if hasattr(self.ver, "setMarkdown"):
+            self.ver.setMarkdown(text)
+        else:
+            self.ver.setPlainText(text)
 
     def _query_nvidia(self):
         """
@@ -304,15 +443,23 @@ class PageOverview(QWidget):
             self.bar_power.setValue(p_pct)
             self.txt_power.setText(f"{info['pwr_draw']:.0f}W / {info['pwr_limit']:.0f}W")
         else:
-            # 无 NVIDIA 或查询失败：置零并显示占位
+            # 无 NVIDIA 独显（或查询失败）：尝试用 Windows 性能计数器读集显利用率
+            util = self._pdh_gpu.read() if self._pdh_gpu else None
+            self.bar_temp.setRange(0, 100)  # 复位刻度（NVIDIA 分支曾改成 110）
+            if util is not None:
+                self.bar_gpu.setValue(util)
+                self.txt_gpu.setText(f"{util}%")
+            else:
+                self.bar_gpu.setValue(0)
+                self.txt_gpu.setText("N/A")
+            # 显存 / 温度 / 功耗：集显一般无法读取，用 N/A 明确占位（而非空白）
             for bar, lab in (
-                (self.bar_gpu, self.txt_gpu),
                 (self.bar_vram, self.txt_vram),
                 (self.bar_temp, self.txt_temp),
                 (self.bar_power, self.txt_power),
             ):
                 bar.setValue(0)
-                lab.setText("--")
+                lab.setText("N/A")
 
         # ========= 系统资源（CPU / 内存 / 磁盘，来自 psutil）=========
         if psutil:
