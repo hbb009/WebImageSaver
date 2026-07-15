@@ -8,12 +8,80 @@ import os
 import json
 from datetime import datetime
 
+from styles.style_all import (
+    install_card_title, restyle_card_title, theme, apply_btn_download, make_card,
+    CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP, CARD_TITLE_BODY_GAP,
+)
+
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor, QPalette
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QGroupBox, QScrollArea, QFrame, QMessageBox,
     QSizePolicy, QComboBox,
 )
+
+
+def _record_zebra_bg() -> str:
+    """历史记录斑马纹底色：暗/亮两套都要能看清深浅差。"""
+    if theme.is_dark:
+        # 在 #0f1430 功能区上略提亮（比 hover_veil 更明显一点）
+        return "rgba(255, 255, 255, 0.07)"
+    # 白底上用实色浅灰，半透明几乎看不出来
+    return "#e8ecf2"
+
+
+def _style_toggle_btn(btn: QPushButton):
+    """切换按钮反色选中态。
+
+    不用全局 QSS：`* { color:… }` 会把选中态文字仍刷成浅色，叠在浅底上像“字消失了”。
+    这里用控件级 stylesheet + palette 双保险，暗/亮各自反色。
+    """
+    checked = btn.isChecked()
+    if theme.is_dark:
+        if checked:
+            bg, fg, bd = "#e8eefc", "#0b1124", "#c5d0ea"
+        else:
+            bg, fg, bd = "rgba(255,255,255,0.06)", "#9fb0d7", "rgba(255,255,255,0.22)"
+    else:
+        if checked:
+            bg, fg, bd = "#1f2937", "#f9fafb", "#111827"
+        else:
+            bg, fg, bd = "rgba(0,0,0,0.04)", "#4b5563", "rgba(0,0,0,0.14)"
+
+    weight = "700" if checked else "600"
+    # padding 要配合 setFixedHeight(28)，过大竖向 padding 会把字裁没
+    btn.setStyleSheet(
+        f"QPushButton#ToggleBtn {{"
+        f"  background: {bg};"
+        f"  color: {fg};"
+        f"  border: 1px solid {bd};"
+        f"  border-radius: 6px;"
+        f"  padding: 2px 8px;"
+        f"  font-size: 13px;"
+        f"  font-weight: {weight};"
+        f"}}"
+        f"QPushButton#ToggleBtn:hover {{"
+        f"  background: {bg};"
+        f"  color: {fg};"
+        f"  border: 1px solid {bd};"
+        f"}}"
+        f"QPushButton#ToggleBtn:checked {{"
+        f"  background: {bg};"
+        f"  color: {fg};"
+        f"  border: 1px solid {bd};"
+        f"}}"
+    )
+    # Windows 原生样式有时仍读 palette 画字色，这里同步写上
+    pal = btn.palette()
+    c_fg = QColor(fg)
+    c_bg = QColor(bg) if not str(bg).startswith("rgba") else QColor(0, 0, 0, 0)
+    pal.setColor(QPalette.ButtonText, c_fg)
+    pal.setColor(QPalette.WindowText, c_fg)
+    pal.setColor(QPalette.Text, c_fg)
+    if c_bg.isValid() and c_bg.alpha() > 0:
+        pal.setColor(QPalette.Button, c_bg)
+    btn.setPalette(pal)
 
 # ── 记录文件路径 ─────────────────────────────────────────────────────────────
 RECORD_FILE = os.path.join(
@@ -46,18 +114,51 @@ def _save_records(records: list):
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
+# ── 单行省略号标签 ───────────────────────────────────────────────────────────
+class _ElideLabel(QLabel):
+    """记录行里用：宽度不够时用"…"省略，而不是 setWordWrap(True) 自动换行。
+    v9.9.6 修复：wordWrap(True) 配合 QSizePolicy.Ignored 会让这个标签的高度
+    依赖当前宽度（hasHeightForWidth），窗口在被拖动/跨屏幕 DPI 重新布局时，
+    Qt 有时会拿一个瞬时的、不准确的宽度去算这次的高度，算出来的高度又没被
+    正确地重新收敛回去，日积月累就把主窗口的最小高度越撑越高（拖一次窗口，
+    内容往下掉一截）——这跟之前"速存图文"页面遇到的是同一类问题。
+    改成单行 + 手动省略号后，标签高度只取决于字体，跟宽度完全无关，
+    从根上不会再有这种高度传染问题；原文完整内容放到 tooltip 里，鼠标悬停可看全。"""
+
+    def __init__(self, text="", parent=None):
+        super().__init__(parent)
+        self._full_text = text
+        self.setWordWrap(False)
+        super().setText(text)
+
+    def setText(self, text):
+        self._full_text = text or ""
+        self._refresh_elided()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._refresh_elided()
+
+    def _refresh_elided(self):
+        fm = self.fontMetrics()
+        elided = fm.elidedText(self._full_text, Qt.ElideRight, max(0, self.width()))
+        super().setText(elided)
+        self.setToolTip(self._full_text if elided != self._full_text else "")
+
+
 # ── 记录行（单行）────────────────────────────────────────────────────────────
 class RecordRow(QFrame):
     """一行显示一条记录：[平台] [日期] [费用] [用途·消耗] [成本]  [编辑][删除]"""
-    def __init__(self, record: dict, on_edit, on_delete, is_even=False, parent=None):
+    def __init__(self, record: dict, on_edit, on_delete, on_cancel, is_even=False, is_editing=False, parent=None):
         super().__init__(parent)
-        self.setObjectName("RecordCard")          # hover/border 都靠这个名字
+        self._is_even = bool(is_even)
+        self.setObjectName("RecordCard")          # hover/编辑态 都靠这个名字
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setFrameShape(QFrame.NoFrame)
         self.setMinimumHeight(38)
-        # ⑤ 双数行直接用内联样式叠加轻微背景，不影响 objectName 的 hover 选择器
-        if is_even:
-            self.setStyleSheet("QFrame#RecordCard { background-color: rgba(255,255,255,0.045); }")
+        # 斑马纹：控件级背景（暗/亮都可见）。QSS 属性选择器在部分 Qt 版本上不可靠，
+        # 这里用主题色 + refresh_theme 双保险，保证两套主题都有深浅差。
+        self._apply_zebra_bg()
 
         row = QHBoxLayout(self)
         row.setContentsMargins(10, 4, 8, 4)
@@ -81,10 +182,11 @@ class RecordRow(QFrame):
         cost_label  = f"每秒 ¥{cost_str}" if is_video else f"每张 ¥{cost_str}"
 
         def _cell(text, obj_name, stretch=1):
-            lbl = QLabel(text)
+            lbl = _ElideLabel(text)
             lbl.setObjectName(obj_name)
             lbl.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-            lbl.setWordWrap(False)
+            lbl.setMinimumWidth(0)         # 允许被压缩到比文字自然宽度更窄（超出部分用省略号）
+            lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             row.addWidget(lbl, stretch)
             return lbl
 
@@ -94,16 +196,57 @@ class RecordRow(QFrame):
         _cell(usage_label,                       "RecordSub",    3)
         _cell(cost_label,                        "RecordResult", 2)
 
-        for txt, obj, cb in [
-            ("编辑", "RecordEditBtn", lambda: on_edit(record)),
-            ("删除", "RecordDelBtn",  lambda: on_delete(record)),
-        ]:
-            btn = QPushButton(txt)
-            btn.setObjectName(obj)
-            btn.setFixedSize(52, 26)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.clicked.connect(cb)
-            row.addWidget(btn)
+        # 编辑 / 删除：正常态显示；编辑态时二者隐藏，换成单独的"取消编辑"
+        self.btn_edit = QPushButton("编辑")
+        self.btn_edit.setObjectName("RecordEditBtn")
+        self.btn_edit.setFixedSize(52, 26)
+        self.btn_edit.setCursor(Qt.PointingHandCursor)
+        self.btn_edit.clicked.connect(lambda: on_edit(record))
+        row.addWidget(self.btn_edit)
+
+        self.btn_del = QPushButton("删除")
+        self.btn_del.setObjectName("RecordDelBtn")
+        self.btn_del.setFixedSize(52, 26)
+        self.btn_del.setCursor(Qt.PointingHandCursor)
+        self.btn_del.clicked.connect(lambda: on_delete(record))
+        row.addWidget(self.btn_del)
+
+        self.btn_cancel = QPushButton("取消编辑")
+        self.btn_cancel.setObjectName("RecordCancelBtn")
+        self.btn_cancel.setFixedSize(110, 26)
+        self.btn_cancel.setCursor(Qt.PointingHandCursor)
+        self.btn_cancel.clicked.connect(lambda: on_cancel())
+        row.addWidget(self.btn_cancel)
+
+        self.set_editing(is_editing)
+
+    def _apply_zebra_bg(self):
+        """奇数/偶数行底色；偶数行用斑马纹，奇数行透明交给 QSS。"""
+        if self._is_even:
+            bg = _record_zebra_bg()
+            self.setStyleSheet(
+                f"QFrame#RecordCard {{ background-color: {bg}; }}"
+            )
+        else:
+            self.setStyleSheet("")
+
+    def refresh_theme(self, *_):
+        """主题切换后重刷斑马纹（内联色不会随 app.qss 自动变）。"""
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self._apply_zebra_bg()
+
+    def set_editing(self, editing: bool):
+        """切换到编辑态：编辑/删除 ↔ 取消编辑，同时驱动橙色外框选择器。"""
+        self.setProperty("editing", "true" if editing else "false")
+        self.btn_edit.setVisible(not editing)
+        self.btn_del.setVisible(not editing)
+        self.btn_cancel.setVisible(editing)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        # polish 之后再写斑马纹，避免被冲掉
+        self._apply_zebra_bg()
+
 
 
 # ── 主页面 ───────────────────────────────────────────────────────────────────
@@ -114,6 +257,8 @@ class PagePointsCalc(QWidget):
         self.setAttribute(Qt.WA_StyledBackground, True)
 
         self._editing_id  = None
+        self._record_rows = {}
+        self._toggle_btns = []   # 月费/CNY/生图 等切换按钮，主题切换时重刷反色
         self._last_result = None
         self._fee_type    = "monthly"
         self._currency    = "CNY"
@@ -123,32 +268,46 @@ class PagePointsCalc(QWidget):
         self._build_ui()
         self._set_usage_type("image")   # 初始化结果卡片与时长选择器的显隐
         self._refresh_records()
+        # 主题切换：斑马纹 + 切换按钮反色
+        theme.changed.connect(self._on_theme_changed)
+
+    def _on_theme_changed(self, *_):
+        for row in getattr(self, "_record_rows", {}).values():
+            if hasattr(row, "refresh_theme"):
+                row.refresh_theme()
+        for b in getattr(self, "_toggle_btns", []):
+            _style_toggle_btn(b)
 
     # ── UI 构建 ──────────────────────────────────────────────────────────────
     def _build_ui(self):
         page_layout = QVBoxLayout(self)
-        page_layout.setContentsMargins(16, 12, 16, 12)
+        # 与系统总览一致：ContentRoot 已有左右内边距，页面不再叠第二层
+        page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.setSpacing(10)
 
-        # 上半：左侧输入 + 右侧结果，固定高度，不拉伸
-        top_row = QHBoxLayout()
-        top_row.setSpacing(14)
-        top_row.addWidget(self._build_input_panel(), 3)
-        top_row.addWidget(self._build_result_panel(), 2)
-        page_layout.addLayout(top_row, 0)
+        # 上半：输入参数 + 计算结果合并为一个区域，中间用竖线分隔，固定高度不拉伸
+        page_layout.addWidget(self._build_top_panel(), 0)
 
         # 下半：历史记录吃掉剩余全部空间
         page_layout.addWidget(self._build_records_panel(), 1)
 
-    # ── 输入面板 ─────────────────────────────────────────────────────────────
-    def _build_input_panel(self) -> QGroupBox:
-        box = QGroupBox("输入参数")
-        box.setObjectName("CalcInputBox")
-        box.setAttribute(Qt.WA_StyledBackground, True)
+    # ── 顶部合并面板：左"输入参数" + 竖线分隔 + 右"计算结果" ────────────────────
+    def _build_top_panel(self) -> QWidget:
+        # 功能区标准卡：输入参数 + 计算结果（同一张卡，中间竖线分隔）
+        box = make_card("CardPointsTop")
 
-        form = QVBoxLayout(box)
-        form.setContentsMargins(12, 10, 12, 10)
-        form.setSpacing(6)
+        outer = QHBoxLayout(box)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # ── 左：输入参数 ─────────────────────────────────────────────────────
+        left_wrap = QWidget()
+        left_wrap.setStyleSheet("background: transparent;")
+        form = QVBoxLayout(left_wrap)
+        form.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, 14, CARD_BOTTOM_GAP)
+        # spacing 与 CARD_TITLE_BODY_GAP 由 install_card_title 自动补偿，不叠加大空隙
+        form.setSpacing(5)
+        install_card_title(box, form, "输入参数")
 
         # ── 行1：平台名称 ＋ 月费/年费 ──────────────────────────────────────
         row1 = QHBoxLayout(); row1.setSpacing(8)
@@ -195,19 +354,33 @@ class PagePointsCalc(QWidget):
         row3.addWidget(self.inp_consume, 1)
         form.addLayout(row3)
 
-        # ── 行4：用途类型 ＋ 视频时长步进器 ＋ 立即计算 ──────────────────────
-        row4 = QHBoxLayout(); row4.setSpacing(8)
+        # ── 行4a：用途类型 ＋ 立即计算 ────────────────────────────────────────
+        row4a = QHBoxLayout(); row4a.setSpacing(8)
         lbl_u = self._lbl("用途类型"); lbl_u.setFixedWidth(72)
-        row4.addWidget(lbl_u)
+        row4a.addWidget(lbl_u)
         self.btn_usage_image = self._toggle("生图",   True,  lambda: self._set_usage_type("image"))
         self.btn_usage_video = self._toggle("生视频", False, lambda: self._set_usage_type("video"))
         self.btn_usage_image.setFixedWidth(64); self.btn_usage_video.setFixedWidth(72)
-        row4.addWidget(self.btn_usage_image)
-        row4.addWidget(self.btn_usage_video)
+        row4a.addWidget(self.btn_usage_image)
+        row4a.addWidget(self.btn_usage_video)
+        row4a.addStretch(1)
+
+        # ② 立即计算按钮：专用 objectName 保证宽度足够
+        self.btn_calc = QPushButton("立即计算")
+        self.btn_calc.setObjectName("CalcRunBtn")
+        self.btn_calc.setCursor(Qt.PointingHandCursor)
+        self.btn_calc.setFixedHeight(28)
+        self.btn_calc.setMinimumWidth(90)
+        self.btn_calc.clicked.connect(self._calc)
+        row4a.addWidget(self.btn_calc)
+        form.addLayout(row4a)
+
+        # ── 行4b：视频时长步进器（单独一行，窗口变窄也不会跟行4a挤在一起撑出横向滚动条）──
+        row4b = QHBoxLayout(); row4b.setSpacing(8)
 
         # 视频时长步进器：|◀  ◀  [10秒]  ▶  ▶|
         lbl_dur = self._lbl("视频时长"); lbl_dur.setFixedWidth(56)
-        row4.addWidget(lbl_dur)
+        row4b.addWidget(lbl_dur)
 
         def _stepper_btn(symbol):
             b = QPushButton(symbol)
@@ -247,34 +420,41 @@ class PagePointsCalc(QWidget):
         self.cmb_video_secs.setCurrentIndex(6)   # 默认10秒（index=6 in 4..15）
 
         for w in (btn_min, btn_dec, self.lbl_secs_display, btn_inc, btn_max):
-            row4.addWidget(w)
-
-        row4.addStretch(1)
-
-        # ② 立即计算按钮：专用 objectName 保证宽度足够
-        self.btn_calc = QPushButton("立即计算")
-        self.btn_calc.setObjectName("CalcRunBtn")
-        self.btn_calc.setCursor(Qt.PointingHandCursor)
-        self.btn_calc.setFixedHeight(28)
-        self.btn_calc.setMinimumWidth(90)
-        self.btn_calc.clicked.connect(self._calc)
-        row4.addWidget(self.btn_calc)
-        form.addLayout(row4)
+            row4b.addWidget(w)
+        row4b.addStretch(1)
+        form.addLayout(row4b)
 
         # video_dur_row 占位（避免 _set_usage_type 报 AttributeError）
         self.video_dur_row = QWidget()
 
-        return box
+        outer.addWidget(left_wrap, 3)
 
-    # ── 结果面板 ─────────────────────────────────────────────────────────────
-    def _build_result_panel(self) -> QGroupBox:
-        box = QGroupBox("计算结果")
-        box.setObjectName("CalcResultBox")
-        box.setAttribute(Qt.WA_StyledBackground, True)
+        # ── 中：不显眼的竖直分隔线（替代原来两个独立卡片的双重边框）──────────
+        divider = QFrame()
+        divider.setObjectName("CalcTopDivider")
+        divider.setFrameShape(QFrame.VLine)
+        divider.setFrameShadow(QFrame.Plain)
+        outer.addWidget(divider)
 
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(6)
+        # ── 右：计算结果 ─────────────────────────────────────────────────────
+        right_wrap = QWidget()
+        right_wrap.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(right_wrap)
+        layout.setContentsMargins(14, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        layout.setSpacing(5)
+        # 右侧标题：与 install_card_title 同规范（全局 CARD_TITLE_BODY_GAP）
+        t_res = QLabel("计算结果")
+        t_res.setProperty("role", "card-title")
+        restyle_card_title(t_res)
+        t_res.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        head = QWidget()
+        head.setStyleSheet("background:transparent;border:none;")
+        head.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        head_l = QVBoxLayout(head)
+        head_l.setContentsMargins(0, 0, 0, max(0, CARD_TITLE_BODY_GAP - max(0, layout.spacing())))
+        head_l.setSpacing(0)
+        head_l.addWidget(t_res)
+        layout.insertWidget(0, head)
 
         # 每行：[标签·左弹性] [金额·固定宽右对齐]，QFrame 确保 QSS 背景生效
         def metric_row(label_text, value_init="—"):
@@ -282,16 +462,18 @@ class PagePointsCalc(QWidget):
             w.setObjectName("MetricCard")
             w.setAttribute(Qt.WA_StyledBackground, True)
             w.setFrameShape(QFrame.NoFrame)
-            w.setFixedHeight(40)
+            w.setFixedHeight(32)   # 压缩行高，配合整个区域瘦身
             hl = QHBoxLayout(w)
             hl.setContentsMargins(12, 0, 12, 0)
             hl.setSpacing(8)
             lbl = QLabel(label_text)
             lbl.setObjectName("MetricLabel")
             lbl.setAttribute(Qt.WA_StyledBackground, True)
+            lbl.setStyleSheet("background: transparent;")   # 兜底：避免文字后出现色块
             val = QLabel(value_init)
             val.setObjectName("MetricValue")
             val.setAttribute(Qt.WA_StyledBackground, True)
+            val.setStyleSheet("background: transparent;")   # 兜底：避免文字后出现色块
             val.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             hl.addWidget(lbl, 1)
             hl.addWidget(val, 1)
@@ -309,20 +491,22 @@ class PagePointsCalc(QWidget):
         self.result_hint.setObjectName("ResultHint")
         self.result_hint.setAlignment(Qt.AlignCenter)
         self.result_hint.setWordWrap(True)
-        self.result_hint.setFixedHeight(32)   # 始终占这么高，不再 setVisible
+        self.result_hint.setFixedHeight(24)   # 压缩，始终占这么高，不再 setVisible
         layout.addWidget(self.result_hint)
 
-        layout.addStretch(1)
-
+        # 主操作：与抖音「粘贴并解析」同款（控件级样式，防父级 transparent 盖掉字色）
         self.btn_save = QPushButton("保存到记录")
-        self.btn_save.setObjectName("SaveBtn")
+        apply_btn_download(self.btn_save)
         self.btn_save.setCursor(Qt.PointingHandCursor)
-        self.btn_save.setFixedHeight(34)
+        self.btn_save.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.btn_save.setEnabled(False)
         self.btn_save.clicked.connect(self._save_record)
         layout.addWidget(self.btn_save)
 
+        outer.addWidget(right_wrap, 2)
+
         return box
+
 
     def _metric(self, label_text, value_text):
         """兼容旧调用（未使用，保留避免报错）"""
@@ -334,42 +518,39 @@ class PagePointsCalc(QWidget):
         return c, val
 
     # ── 历史记录面板 ─────────────────────────────────────────────────────────
-    def _build_records_panel(self) -> QGroupBox:
-        box = QGroupBox("历史记录")
-        box.setObjectName("RecordsBox")
-        box.setAttribute(Qt.WA_StyledBackground, True)
+    def _build_records_panel(self) -> QWidget:
+        box = make_card("CardPointsRecords")
 
         outer = QVBoxLayout(box)
-        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        # 与 CARD_TITLE_BODY_GAP 自动补偿，正文区块间距 8
         outer.setSpacing(8)
+        install_card_title(box, outer, "历史记录")
 
         def _make_section(title_text, icon):
             sec = QWidget()
             sec.setAttribute(Qt.WA_StyledBackground, True)
+            sec.setStyleSheet("background: transparent;")   # 避免退回全局 QWidget 底色、和卡片背景不一致出现色块
             vl = QVBoxLayout(sec)
             vl.setContentsMargins(0, 0, 0, 0)
             vl.setSpacing(0)
 
-            # 小标题
-            title_bar = QWidget()
-            title_bar.setObjectName("RecordSectionTitle")
-            title_bar.setAttribute(Qt.WA_StyledBackground, True)
-            tb = QHBoxLayout(title_bar)
-            tb.setContentsMargins(10, 4, 10, 4)
-            lbl = QLabel(f"{icon}  {title_text}")
-            lbl.setObjectName("RecordSectionLabel")
-            tb.addWidget(lbl); tb.addStretch(1)
-            vl.addWidget(title_bar)
-
-            # 表头
+            # 表头：第一列直接用"图标 + 分区名"替换原来的"平台"文字，
+            # 不再单独占一行小标题，整体更紧凑
             header = QWidget()
             header.setObjectName("RecordHeader")
             header.setAttribute(Qt.WA_StyledBackground, True)
             hh = QHBoxLayout(header)
-            hh.setContentsMargins(10, 3, 8, 3)
+            hh.setContentsMargins(10, 4, 8, 4)
             hh.setSpacing(6)
-            for txt, stretch in [("平台",2),("时间",2),("费用",2),("用途/消耗",3),("成本",2)]:
-                hl = QLabel(txt); hl.setObjectName("RecordHeaderCell")
+            columns = [(f"{icon}  {title_text}", 2, "RecordSectionHeaderCell")] + [
+                (txt, stretch, "RecordHeaderCell")
+                for txt, stretch in [("时间", 2), ("费用", 2), ("用途/消耗", 3), ("成本", 2)]
+            ]
+            for txt, stretch, obj in columns:
+                hl = _ElideLabel(txt); hl.setObjectName(obj)
+                hl.setMinimumWidth(0)
+                hl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
                 hh.addWidget(hl, stretch)
             sp = QWidget(); sp.setFixedWidth(52*2+6+16)
             hh.addWidget(sp, 0)
@@ -379,11 +560,13 @@ class PagePointsCalc(QWidget):
             sep.setObjectName("RecordDivider")
             vl.addWidget(sep)
 
-            # 滚动区
+            # 滚动区（竖向滚动条：记录区标准，同截图工具）
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
             scroll.setFrameShape(QFrame.NoFrame)
             scroll.setObjectName("RecordsScroll")
+            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
             container = QWidget()
             container.setObjectName("RecordsContainer")
             container.setAttribute(Qt.WA_StyledBackground, True)
@@ -415,10 +598,18 @@ class PagePointsCalc(QWidget):
         e.setPlaceholderText(placeholder); e.setFixedHeight(28); return e
 
     def _toggle(self, text, checked, slot):
-        b = QPushButton(text); b.setObjectName("ToggleBtn")
-        b.setCheckable(True); b.setChecked(checked)
-        b.setFixedHeight(28); b.setCursor(Qt.PointingHandCursor)
-        b.clicked.connect(slot); return b
+        b = QPushButton(text)
+        b.setObjectName("ToggleBtn")
+        b.setCheckable(True)
+        b.setChecked(checked)
+        b.setFixedHeight(28)
+        b.setCursor(Qt.PointingHandCursor)
+        b.clicked.connect(slot)
+        # 选中态变化时重刷反色（含程序里 setChecked 联动的另一颗按钮）
+        b.toggled.connect(lambda _c, btn=b: _style_toggle_btn(btn))
+        _style_toggle_btn(b)
+        self._toggle_btns.append(b)
+        return b
 
     def _hrow(self, *widgets):
         h = QHBoxLayout(); h.setSpacing(6)
@@ -430,16 +621,22 @@ class PagePointsCalc(QWidget):
         self._fee_type = t
         self.btn_monthly.setChecked(t == "monthly")
         self.btn_yearly.setChecked(t == "yearly")
+        _style_toggle_btn(self.btn_monthly)
+        _style_toggle_btn(self.btn_yearly)
 
     def _set_currency(self, c):
         self._currency = c
         self.btn_cny.setChecked(c == "CNY")
         self.btn_usd.setChecked(c == "USD")
+        _style_toggle_btn(self.btn_cny)
+        _style_toggle_btn(self.btn_usd)
 
     def _set_usage_type(self, t):
         self._usage_type = t
         self.btn_usage_image.setChecked(t == "image")
         self.btn_usage_video.setChecked(t == "video")
+        _style_toggle_btn(self.btn_usage_image)
+        _style_toggle_btn(self.btn_usage_video)
         self.lbl_cost_image[0].setVisible(t == "image")
         self.lbl_cost_video[0].setVisible(t == "video")
 
@@ -559,6 +756,35 @@ class PagePointsCalc(QWidget):
         self.btn_save.setText("保存修改")
         self.btn_save.setEnabled(False)
         self._show_hint("📝 编辑模式：修改后请点击「重新计算」再保存")
+        self._mark_editing_row(self._editing_id)
+
+    def _mark_editing_row(self, record_id):
+        """把记录行的“编辑/删除 ↔ 取消编辑”状态，切换到 record_id 对应的那一行（None 表示全部取消）。"""
+        for rid, row in getattr(self, "_record_rows", {}).items():
+            row.set_editing(rid == record_id)
+
+    def _cancel_edit(self):
+        """点击某条记录的「取消编辑」：退出编辑模式，输入区恢复初始状态，不保存任何修改。"""
+        self._editing_id  = None
+        self._last_result = None
+        self.inp_platform.clear()
+        self.inp_amount.clear()
+        self.inp_rate.setText("7.25")
+        self._set_currency("CNY")
+        self._set_fee_type("monthly")
+        self.inp_monthly_pts.clear()
+        self.inp_consume.clear()
+        self._set_usage_type("image")
+        self._video_secs = 10
+        self.lbl_secs_display.setText("10 秒")
+        self.cmb_video_secs.blockSignals(True)
+        self.cmb_video_secs.setCurrentIndex(6)
+        self.cmb_video_secs.blockSignals(False)
+        self.btn_calc.setText("立即计算")
+        self.btn_save.setText("保存到记录")
+        self.btn_save.setEnabled(False)
+        self._show_hint("")
+        self._mark_editing_row(None)
 
     def _delete_record(self, record):
         if QMessageBox.question(
@@ -580,6 +806,8 @@ class PagePointsCalc(QWidget):
         img_recs  = [r for r in records if r.get("usage_type", "image") == "image"]
         vid_recs  = [r for r in records if r.get("usage_type", "image") != "image"]
 
+        self._record_rows = {}
+
         def _fill(layout, recs, empty_text):
             if not recs:
                 lbl = QLabel(empty_text)
@@ -588,8 +816,11 @@ class PagePointsCalc(QWidget):
                 layout.insertWidget(0, lbl)
                 return
             for i, record in enumerate(reversed(recs)):
-                row = RecordRow(record, self._edit_record, self._delete_record, is_even=(i % 2 == 1))
+                rid = record.get("id")
+                row = RecordRow(record, self._edit_record, self._delete_record, self._cancel_edit,
+                                 is_even=(i % 2 == 1), is_editing=(rid == self._editing_id))
                 layout.insertWidget(i, row)
+                self._record_rows[rid] = row
 
         _fill(self.layout_image, img_recs, "暂无生图记录")
         _fill(self.layout_video, vid_recs, "暂无生视频记录")

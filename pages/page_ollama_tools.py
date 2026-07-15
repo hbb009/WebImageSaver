@@ -1,5 +1,6 @@
-# pages/page_ollama_tools.py  v9.6
-# 三合一 Ollama 工具页：反推 / 打标 / 对话
+# pages/page_ollama_tools.py  v9.9
+# 二合一 Ollama 工具页：反推 / 打标
+# （v9.9：移除「对话」子页，聊天类交互统一收敛到「文学写作」页的技能对话）
 # 顶栏：刷新图标(左一) → 模型下拉(左二,拉宽) → stretch → 状态灯+文字(右)
 # Tab 样式扁平化，内部用分割线代替 GroupBox 嵌套
 
@@ -34,14 +35,15 @@ try:
 except Exception:
     oc = None
 
-from styles.page_ollama_tools import (
+from styles.style_all import (
+    theme,
+    fmt,
+    tk,
     TAB_QSS as _TAB_QSS,
-    LIST_BATCH_QSS, LIST_CHAT_QSS,
-    THINK_TITLE_QSS, THINK_BODY_QSS,
-    SRC_TITLE_QSS, SRC_BODY_QSS, SRC_LINK_QSS,
-    INPUT_TRANSPARENT_QSS, REV_PREVIEW_QSS,
-    REV_INFO_QSS, REV_EN_QSS,
-    TIME_LABEL_QSS, THINKING_DOT_QSS, THINKING_TEXT_QSS,
+    LIST_BATCH_QSS,
+    REV_PREVIEW_QSS,
+    REV_INFO_QSS,
+    REV_EN_QSS,
     chk_style as _chk_style_fn,
 )
 
@@ -171,7 +173,7 @@ class _Preview(QFrame):
         self.setObjectName("RevPreview")
         self.setAcceptDrops(True)
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setStyleSheet(REV_PREVIEW_QSS)
+        self.setStyleSheet(fmt(REV_PREVIEW_QSS))
         self.setMinimumHeight(120)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         box = QVBoxLayout(self)
@@ -219,7 +221,8 @@ class TabRevPrompt(QWidget):
         self.image_path = None
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(8, 10, 8, 4)
+        # 标签页贴齐主内容区左右（外边距由 ContentRoot 统一提供）
+        root.setContentsMargins(0, 4, 0, 0)
         root.setSpacing(8)
 
         # ── 工具栏：选图 / 强制视觉 / 生成 ──────────────────────────────────
@@ -256,7 +259,8 @@ class TabRevPrompt(QWidget):
 
         # 图片信息区固定在底部
         lbl_info = QLabel("图片信息")
-        lbl_info.setStyleSheet(REV_INFO_QSS)
+        lbl_info.setStyleSheet(fmt(REV_INFO_QSS))
+        self._themed_info_labels = [lbl_info]
         left.addWidget(lbl_info, 0)
         left.addWidget(_make_hline(), 0)
 
@@ -280,7 +284,8 @@ class TabRevPrompt(QWidget):
         mid.addLayout(right, 1)
 
         lbl_mode = QLabel("输出模式")
-        lbl_mode.setStyleSheet(REV_INFO_QSS)
+        lbl_mode.setStyleSheet(fmt(REV_INFO_QSS))
+        self._themed_info_labels.append(lbl_mode)
         right.addWidget(lbl_mode)
         right.addWidget(_make_hline())
 
@@ -312,8 +317,14 @@ class TabRevPrompt(QWidget):
 
         self.en = QTextEdit()
         self.en.setPlaceholderText("生成的提示词将显示在这里…")
-        self.en.setStyleSheet(REV_EN_QSS)
+        self.en.setStyleSheet(fmt(REV_EN_QSS))
         right.addWidget(self.en, 1)
+
+    def refresh_theme(self, *_):
+        self.preview.setStyleSheet(fmt(REV_PREVIEW_QSS))
+        for lbl in self._themed_info_labels:
+            lbl.setStyleSheet(fmt(REV_INFO_QSS))
+        self.en.setStyleSheet(fmt(REV_EN_QSS))
 
     def _pick(self):
         p, _ = QFileDialog.getOpenFileName(
@@ -466,7 +477,8 @@ class TabBatchTag(QWidget):
         self.folder = None; self.worker = None
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(8, 10, 8, 4)
+        # 标签页贴齐主内容区左右（外边距由 ContentRoot 统一提供）
+        lay.setContentsMargins(0, 4, 0, 0)
         lay.setSpacing(8)
 
         # 文件夹行
@@ -514,7 +526,7 @@ class TabBatchTag(QWidget):
 
         # 文件列表
         self.list = QListWidget()
-        self.list.setStyleSheet(LIST_BATCH_QSS)
+        self.list.setStyleSheet(fmt(LIST_BATCH_QSS))
         lay.addWidget(self.list, 1)
 
         lay.addWidget(_make_hline())
@@ -530,6 +542,10 @@ class TabBatchTag(QWidget):
         self.btn_go.clicked.connect(self._run)
         self.btn_stop.clicked.connect(self._stop)
         lay.addLayout(row_btn)
+
+
+    def refresh_theme(self, *_):
+        self.list.setStyleSheet(fmt(LIST_BATCH_QSS))
 
     def _pick(self):
         d = QFileDialog.getExistingDirectory(self, "选择图片文件夹", "")
@@ -751,340 +767,6 @@ class _ChatWorker(QThread):
 def _chk_style(bg: str, border: str, text_color: str, bold: bool, size: int = 15) -> str:
     return _chk_style_fn(bg, border, text_color, bold, size)
 
-class TabOllamaChat(QWidget):
-    # status_msg 只用于右上角：仅界面操作类消息（开关切换、清空等）
-    status_msg = pyqtSignal(str)
-
-    def __init__(self, get_model_fn, parent=None):
-        super().__init__(parent)
-        self._get_model = get_model_fn
-        self._render_timer = QTimer(self)
-        self._render_timer.setSingleShot(True)
-        self._render_timer.timeout.connect(self._flush_render)
-        self._last_rendered_len = 0
-        self.chat_history  = []
-        self.current_ai_label = None
-        self.input_history = []
-        self.history_index = -1
-        self._buf = ""
-
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(8, 10, 8, 4)
-        lay.setSpacing(6)
-
-        # ── 时间戳行 ──────────────────────────────────────────────────
-        self.time_label = QLabel()
-        self.time_label.setStyleSheet(TIME_LABEL_QSS)
-        self.time_label.setAlignment(Qt.AlignRight)
-        lay.addWidget(self.time_label)
-        self._clock = QTimer(self)
-        self._clock.timeout.connect(self._tick)
-        self._clock.start(1000)
-        self._tick()
-
-        lay.addWidget(_make_hline())
-
-        # ── 功能开关栏：复选框样式 ────────────────────────────────────
-        toggle_row = QHBoxLayout()
-        toggle_row.setSpacing(16)
-
-        self.chk_web = QCheckBox("联网搜索")
-        self.chk_web.setStyleSheet(_chk_style("#1d4ed8", "#3b82f6", "#93c5fd", True, 15))
-        self.chk_web.setToolTip("勾选后发送时自动联网搜索\n问题含[上网/搜索/最新]等词也会自动触发")
-        self.chk_web.stateChanged.connect(self._on_web_changed)
-        toggle_row.addWidget(self.chk_web)
-
-        self.chk_think = QCheckBox("深度思考")
-        self.chk_think.setStyleSheet(_chk_style("#6d28d9", "#a78bfa", "#c4b5fd", True, 15))
-        self.chk_think.setToolTip("勾选后，模型先分析问题再作答，回答更有条理")
-        self.chk_think.stateChanged.connect(self._on_think_changed)
-        toggle_row.addWidget(self.chk_think)
-
-        toggle_row.addStretch(1)
-        lay.addLayout(toggle_row)
-
-        lay.addWidget(_make_hline())
-
-        # ── 对话气泡列表 ──────────────────────────────────────────────
-        self.list = QListWidget()
-        self.list.setMinimumHeight(260)
-        self.list.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-        self.list.setSelectionMode(QAbstractItemView.NoSelection)
-        self.list.setFocusPolicy(Qt.NoFocus)
-        self.list.setStyleSheet(LIST_CHAT_QSS)
-        lay.addWidget(self.list, 1)
-
-        line_px = QFontMetrics(self.list.font()).lineSpacing() + 2
-        self._scroll_step = line_px
-        sb = self.list.verticalScrollBar()
-        sb.setSingleStep(line_px)
-        sb.setPageStep(max(1, self.list.viewport().height() - line_px))
-        self.list.viewport().installEventFilter(self)
-
-        lay.addWidget(_make_hline())
-
-        # ── 内部状态栏（AI过程提示，位于输入框上方）─────────────────
-        status_row = QHBoxLayout()
-        status_row.setContentsMargins(4, 2, 4, 2)
-        status_row.setSpacing(6)
-        self._inner_dot = QLabel("⚪")
-        self._inner_dot.setFixedWidth(18)
-        self._inner_dot.setAlignment(Qt.AlignCenter)
-        self._inner_dot.setStyleSheet(THINKING_DOT_QSS)
-        status_row.addWidget(self._inner_dot)
-        self._inner_text = QLabel("就绪")
-        self._inner_text.setStyleSheet(THINKING_TEXT_QSS)
-        self._inner_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        status_row.addWidget(self._inner_text)
-        lay.addLayout(status_row)
-
-        # ── 输入框 ───────────────────────────────────────────────────
-        lay.addWidget(QLabel("输入问题："))
-        self.input = QTextEdit()
-        self.input.setMinimumHeight(80)
-        self.input.setMaximumHeight(160)
-        self.input.setStyleSheet(INPUT_TRANSPARENT_QSS)
-        self.input.installEventFilter(self)
-        lay.addWidget(self.input)
-
-        # ── 按钮行 ───────────────────────────────────────────────────
-        row = QHBoxLayout()
-        row.addStretch()
-
-        self.chk_enter = QCheckBox("回车发送")
-        self.chk_enter.setChecked(True)   # 默认勾选
-        self.chk_enter.setStyleSheet(_chk_style("#1d4ed8", "#3b82f6", "#93c5fd", False, 13))
-        self.chk_enter.setToolTip("勾选：直接按 Enter 发送\n取消：按 Shift+Enter 换行，Enter 换行")
-        row.addWidget(self.chk_enter)
-        row.addSpacing(12)
-
-        self.send_btn = QPushButton("发送")
-        self.send_btn.clicked.connect(self._send)
-        row.addWidget(self.send_btn)
-        self.up = QPushButton("上条指令")
-        self.up.setEnabled(False)
-        self.up.clicked.connect(self._load_prev)
-        row.addWidget(self.up)
-        self.clear_btn = QPushButton("清空对话")
-        self.clear_btn.clicked.connect(self._clear)
-        row.addWidget(self.clear_btn)
-        row.addStretch()
-        lay.addLayout(row)
-
-    # ── 内部状态栏 ────────────────────────────────────────────────────
-    def _set_inner(self, msg: str):
-        dot_map = {
-            "🟢": ("🟢", "#22c55e"),
-            "🟡": ("🟡", "#f59e0b"),
-            "⚪": ("⚪", "#5a6a8a"),
-            "⚠️": ("🟠", "#f97316"),
-            "❌": ("🔴", "#ef4444"),
-            "✅": ("🟢", "#22c55e"),
-            "🌐": ("🔵", "#3b82f6"),
-            "🧠": ("🟣", "#a78bfa"),
-        }
-        dot, color = "⚪", "#5a6a8a"
-        text = msg
-        for prefix, (d, c) in dot_map.items():
-            if msg.startswith(prefix):
-                dot, color = d, c
-                text = msg[len(prefix):].lstrip()
-                break
-        self._inner_dot.setText(dot)
-        self._inner_text.setText(text)
-        self._inner_text.setStyleSheet(f"color:{color}; font-size:12px;")
-
-    def _tick(self):
-        from datetime import datetime
-        self.time_label.setText(datetime.now().strftime("%Y年%m月%d日  %A  %H:%M:%S"))
-
-    # ── 开关回调（只通知右上角）─────────────────────────────────────
-    def _on_web_changed(self, state):
-        if state and not _DDGS_OK:
-            self._set_inner("⚠️ 未安装 duckduckgo-search，请执行: pip install duckduckgo-search")
-        else:
-            self.status_msg.emit("🟢 联网搜索已开启" if state else "⚪ 联网搜索已关闭")
-
-    def _on_think_changed(self, state):
-        self.status_msg.emit("🟢 深度思考已开启" if state else "⚪ 深度思考已关闭")
-
-    def _send(self):
-        self._buf = ""; self._last_rendered_len = 0; self.current_ai_item = None
-        if not oc.is_alive():
-            self._set_inner("⚠️ 未运行 Ollama"); return
-        model = self._get_model()
-        if not model:
-            self._set_inner("⚠️ 未选择模型"); return
-        if not oc.has_model(model):
-            self._set_inner(f"⚠️ 未发现模型 {model}"); return
-        prompt = self.input.toPlainText().strip()
-        if not prompt: return
-
-        self.input_history.append(prompt); self.history_index = len(self.input_history)
-        if not self.chat_history:
-            self.chat_history.append({"role": "system", "content": "请用中文简洁回答。"})
-        self.chat_history.append({"role": "user", "content": prompt})
-        self._add_bubble(prompt, is_user=True)
-        self.input.clear(); self.current_ai_label = None
-        self.up.setEnabled(True)
-
-        modes = []
-        if self.chk_web.isChecked():             modes.append("联网")
-        elif _DDGS_OK and _should_auto_search(prompt): modes.append("自动联网")
-        if self.chk_think.isChecked():           modes.append("深度思考")
-        hint = "（" + " + ".join(modes) + "）" if modes else ""
-        self._set_inner(f"🟡 回答生成中{hint}…")
-
-        self.worker = _ChatWorker(
-            model, self.chat_history,
-            web_search=self.chk_web.isChecked(),
-            deep_think=self.chk_think.isChecked(),
-        )
-        self.worker.chunk.connect(self._on_chunk)
-        self.worker.status.connect(self._set_inner)      # AI 进度 → 内部状态栏
-        self.worker.sources.connect(self._show_sources)
-        self.worker.error.connect(lambda m: self._set_inner("❌ " + m))
-        self.worker.finished.connect(self._on_done)
-        self.worker.start()
-
-    def _on_chunk(self, piece):
-        if piece.startswith("\x00THINK\x00") and piece.endswith("\x00/THINK\x00"):
-            summary = piece[len("\x00THINK\x00"):-len("\x00/THINK\x00")]
-            self._add_think_bubble(summary)
-            return
-        self._buf += piece
-        if not self._render_timer.isActive(): self._render_timer.start(40)
-
-    def _add_think_bubble(self, summary: str):
-        w = QWidget()
-        title = QLabel("🧠 深度思考过程（点击展开）")
-        title.setStyleSheet(THINK_TITLE_QSS)
-        title.setCursor(Qt.PointingHandCursor)
-        body = QLabel(summary); body.setWordWrap(True)
-        body.setFont(QFont("微软雅黑", 9))
-        body.setStyleSheet(THINK_BODY_QSS + "border-radius:4px; margin-top:2px;")
-        body.setVisible(False)
-        body.setFixedWidth(int(self.list.viewport().width() * 0.88))
-        item = QListWidgetItem()
-        def _toggle(_=None):
-            body.setVisible(not body.isVisible()); item.setSizeHint(w.sizeHint())
-        title.mousePressEvent = _toggle
-        vlay = QVBoxLayout(); vlay.setContentsMargins(0,0,0,0); vlay.setSpacing(2)
-        vlay.addWidget(title); vlay.addWidget(body)
-        outer = QHBoxLayout(); outer.setContentsMargins(20,1,20,4)
-        outer.addLayout(vlay); outer.addStretch()
-        w.setLayout(outer)
-        item.setSizeHint(w.sizeHint()); item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
-        self.list.addItem(item); self.list.setItemWidget(item, w); self.list.scrollToBottom()
-
-    def _add_bubble(self, text, is_user):
-        w = QWidget(); lab = QLabel(text)
-        lab.setWordWrap(True); lab.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        lab.setFont(QFont("微软雅黑", 10))
-        lab.setFixedWidth(int(self.list.viewport().width() * (0.70 if is_user else 0.88)))
-        if is_user:
-            lab.setObjectName("ChatBubbleUser")
-            lab.setStyleSheet("QLabel#ChatBubbleUser{background:#0e1530;border:1px solid #2a3965;"
-                              "border-radius:8px;padding:6px 10px;}")
-        out = QHBoxLayout(); out.setContentsMargins(20,1,20,6)
-        inner = QVBoxLayout(); inner.setContentsMargins(0,0,0,0); inner.addWidget(lab)
-        if is_user: out.addStretch(); out.addLayout(inner)
-        else:       out.addLayout(inner); out.addStretch()
-        w.setLayout(out)
-        item = QListWidgetItem(); item.setSizeHint(w.sizeHint())
-        item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
-        self.list.addItem(item); self.list.setItemWidget(item, w)
-        return lab, item
-
-    def _clear(self):
-        self.list.clear(); self.chat_history = []
-        self.current_ai_label = self.current_ai_item = None
-        self._buf = ""; self._last_rendered_len = 0
-        self._set_inner("⚪ 对话已清空")
-        self.status_msg.emit("⚪ 对话已清空")
-
-    def _load_prev(self):
-        if not self.input_history: return
-        self.history_index = max(0, self.history_index - 1)
-        self.input.setPlainText(self.input_history[self.history_index])
-        self.input.moveCursor(QTextCursor.End)
-
-    def _flush_render(self):
-        filtered = re.sub(r"<\s*think\s*>.*?<\s*/\s*think\s*>", "", self._buf, flags=re.I|re.S)
-        if self.current_ai_label is None:
-            self.current_ai_label, self.current_ai_item = self._add_bubble(filtered, is_user=False)
-            self._last_rendered_len = len(filtered)
-        elif len(filtered) > self._last_rendered_len:
-            self.current_ai_label.setText(filtered)
-            container = self.list.itemWidget(self.current_ai_item)
-            nh = container.sizeHint()
-            if nh != self.current_ai_item.sizeHint(): self.current_ai_item.setSizeHint(nh)
-            self._last_rendered_len = len(filtered)
-        self.list.scrollToBottom()
-
-    def _on_done(self):
-        if not self._buf.endswith("\n"): self._buf += "\n"
-        self._flush_render()
-        sp = QListWidgetItem(); sp.setSizeHint(QSize(1,10))
-        sp.setFlags(sp.flags() & ~Qt.ItemIsSelectable)
-        self.list.addItem(sp); self.list.scrollToBottom()
-        self._set_inner("🟢 回答完成")
-
-    def _show_sources(self, src_list: list):
-        if not src_list: return
-        w = QWidget()
-        title = QLabel(f"🔗 参考来源（{len(src_list)} 条，点击展开）")
-        title.setStyleSheet(SRC_TITLE_QSS)
-        title.setCursor(Qt.PointingHandCursor)
-        body = QWidget()
-        body_lay = QVBoxLayout(body); body_lay.setContentsMargins(4,4,4,4); body_lay.setSpacing(3)
-        for i, s in enumerate(src_list, 1):
-            lbl = QLabel(f'<a href="{s["href"]}" style="color:#60a5fa;">'
-                         f'[{i}] {s["title"][:60]}{"…" if len(s["title"])>60 else ""}</a>')
-            lbl.setOpenExternalLinks(True); lbl.setWordWrap(True)
-            lbl.setFont(QFont("微软雅黑", 9))
-            lbl.setStyleSheet(SRC_LINK_QSS)
-            body_lay.addWidget(lbl)
-        body.setStyleSheet(SRC_BODY_QSS)
-        body.setFixedWidth(int(self.list.viewport().width() * 0.88))
-        body.setVisible(False)
-        item = QListWidgetItem()
-        def _toggle(_=None):
-            body.setVisible(not body.isVisible())
-            item.setSizeHint(w.sizeHint()); self.list.scrollToBottom()
-        title.mousePressEvent = _toggle
-        vlay = QVBoxLayout(); vlay.setContentsMargins(0,0,0,0); vlay.setSpacing(2)
-        vlay.addWidget(title); vlay.addWidget(body)
-        outer = QHBoxLayout(); outer.setContentsMargins(20,1,20,6)
-        outer.addLayout(vlay); outer.addStretch()
-        w.setLayout(outer)
-        item.setSizeHint(w.sizeHint()); item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
-        self.list.addItem(item); self.list.setItemWidget(item, w); self.list.scrollToBottom()
-
-    def eventFilter(self, obj, event):
-        if obj is self.list.viewport() and event.type() == QEvent.Wheel:
-            delta = event.angleDelta().y()
-            if delta:
-                sb = self.list.verticalScrollBar()
-                sb.setValue(sb.value() - (self._scroll_step if delta > 0 else -self._scroll_step))
-                return True
-        if obj is self.input and event.type() == QEvent.KeyPress:
-            ke = event
-            if ke.key() in (Qt.Key_Return, Qt.Key_Enter):
-                if ke.modifiers() == Qt.NoModifier and self.chk_enter.isChecked():
-                    # 回车发送模式：Enter 直接发送
-                    self._send()
-                    return True
-                elif ke.modifiers() == Qt.ShiftModifier:
-                    # Shift+Enter 始终换行（不拦截，交给 QTextEdit 默认处理）
-                    pass
-        return super().eventFilter(obj, event)
-
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        sb = self.list.verticalScrollBar()
-        sb.setPageStep(max(1, self.list.viewport().height() - getattr(self, "_scroll_step", 16)))
-
 
 class _ModelListWorker(QThread):
     done = pyqtSignal(list)
@@ -1095,16 +777,30 @@ class _ModelListWorker(QThread):
 
 
 class PageOllamaTools(QWidget):
+    # ===== 窗口高度 BUG 根治（与 Grok 诊断一致：heightForWidth 把虚高传给主窗口）=====
+    # 本页含 wordWrap 自动换行标签，会让整页 hasHeightForWidth()=True，Qt 据此按当前较窄
+    # 宽度把页面高度算大，虚高一路传到主窗口，抬高窗口“首选高度”，真机上一拖窗口就长高、
+    # 缩不回去。对照 6 个正常页面 hasHeightForWidth()=False、首选高度恒 836（<900）。
+    # 修法：对外声明“高度不随宽度变化”，并把对外首选高度压到不超过侧边栏；标签内部仍
+    # 照常换行、不截断文字，实际布局照常把可用高度分给本页，视觉无变化。
+    def hasHeightForWidth(self):
+        return False
+
+    def sizeHint(self):
+        s = super().sizeHint()
+        return QSize(s.width(), min(s.height(), 700))
+
     def __init__(self):
         super().__init__()
         self._models_loaded = False
         self._list_worker   = None
 
         # 注入局部 QSS
-        self.setStyleSheet(_TAB_QSS)
+        self.setStyleSheet(fmt(_TAB_QSS))
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(12, 6, 12, 12)
+        # 与系统总览一致：ContentRoot 已有左右内边距，页面不再叠第二层
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(6)
 
         # ── 共享顶栏：[🔄] [模型下拉──────────────] <stretch> [● 状态文字] ──
@@ -1148,15 +844,21 @@ class PageOllamaTools(QWidget):
 
         self.tab_rev   = TabRevPrompt(get_model_fn=_get_model)
         self.tab_batch = TabBatchTag(get_model_fn=_get_model)
-        self.tab_chat  = TabOllamaChat(get_model_fn=_get_model)
 
         self.tabs.addTab(self.tab_rev,   "🖼  反推")
         self.tabs.addTab(self.tab_batch, "🏷  打标")
-        self.tabs.addTab(self.tab_chat,  "💬  对话")
 
         # 子页状态 → 顶栏
-        for tab in (self.tab_rev, self.tab_batch, self.tab_chat):
+        for tab in (self.tab_rev, self.tab_batch):
             tab.status_msg.connect(self._set_status)
+
+        theme.changed.connect(self.refresh_theme)
+
+    def refresh_theme(self, *_):
+        """重刷本页全部控件级样式（只 setStyleSheet，不重建控件）。"""
+        self.setStyleSheet(fmt(_TAB_QSS))
+        for tab in (self.tab_rev, self.tab_batch):
+            tab.refresh_theme()
 
     def _set_status(self, msg: str):
         """解析状态信息：emoji 前缀→点，其余→文字"""

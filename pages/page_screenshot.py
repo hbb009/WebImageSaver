@@ -1,4 +1,26 @@
-from styles.common_styles import TEXT_STYLE, BUTTON_STYLE, LINEEDIT_STYLE
+from styles.style_all import (
+    TEXT_STYLE,
+    BUTTON_STYLE,
+    LINEEDIT_STYLE,
+    install_card_title,
+    make_card,
+    restyle_card_frame,
+    apply_folder_path_edit,
+    restyle_folder_path_edit,
+
+    CARD_LEFT_GAP,
+    CARD_TOP_GAP,
+    CARD_RIGHT_GAP,
+    CARD_BOTTOM_GAP,
+    theme,
+    fmt,
+    tk,
+)
+
+# 全局 QWidget 兜底背景会给没显式声明 background:transparent 的 QLabel/QRadioButton/
+# QCheckBox 刷上不透明色块（见 card_ui_standard.md 3.3），TEXT_STYLE 本身不含这条，
+# 这里补一份"叠加透明背景"的版本，本页所有用 TEXT_STYLE 的控件统一改用这个。
+TEXT_STYLE_T = TEXT_STYLE + " background: transparent;"
 
 import os
 import sys
@@ -7,9 +29,9 @@ import subprocess
 from datetime import datetime
 
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit, QPushButton,
     QListWidget, QListWidgetItem, QCheckBox, QFileDialog, QGroupBox, QComboBox,
-    QButtonGroup, QRadioButton, QMenu, QApplication, QLineEdit as _QLineEdit
+    QButtonGroup, QRadioButton, QMenu, QApplication, QFrame, QLineEdit as _QLineEdit
 )
 from PyQt5.QtCore import Qt, QRect, QPoint, QSize, QTimer, pyqtSignal, QObject
 from PyQt5.QtGui import (
@@ -70,11 +92,19 @@ class PreviewLabel(QLabel):
         self._src = None
         self.setAlignment(Qt.AlignCenter)
         self.setMinimumSize(220, 220)
-        self.setStyleSheet("color:#6b7aa0;")
+        self.setWordWrap(True)
+        self._apply_style()
         self.setText(self._PLACEHOLDER)
+
+    def refresh_theme(self, *_):
+        self._apply_style()
+
+    def _apply_style(self):
+        self.setStyleSheet(f"background:transparent; color:{tk('text_dim')};")
 
     def set_image(self, pixmap):
         self._src = pixmap if (pixmap is not None and not pixmap.isNull()) else None
+        self._apply_style()
         self._rescale()
 
     def _rescale(self):
@@ -354,7 +384,7 @@ class AnnotationEditor(QWidget):
         self._done = False
         self.setWindowTitle("截图编辑")
         self.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint)
-        self.setStyleSheet("QWidget{background:#0f1424;}")
+        self.setStyleSheet(f"QWidget{{background:{tk('bg')};}}")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 10, 10, 10); root.setSpacing(8)
@@ -375,7 +405,7 @@ class AnnotationEditor(QWidget):
         bar.addSpacing(8); bar.addWidget(self._sep())
         for name in ["#ff3b30", "#ffcc00", "#34c759", "#0a84ff", "#ffffff", "#000000"]:
             cb = QPushButton(); cb.setFixedSize(22, 22)
-            cb.setStyleSheet(f"background:{name}; border:1px solid #444; border-radius:11px;")
+            cb.setStyleSheet(f"background:{name}; border:1px solid {tk('border_3')}; border-radius:11px;")
             cb.clicked.connect(lambda _, c=name: self._set_color(c))
             bar.addWidget(cb)
 
@@ -397,7 +427,7 @@ class AnnotationEditor(QWidget):
         self.adjustSize(); self._center()
 
     def _sep(self):
-        s = QLabel("｜"); s.setStyleSheet("color:#33405f;"); return s
+        s = QLabel("｜"); s.setStyleSheet(f"color:{tk('border')}; background: transparent;"); return s
 
     def _center(self):
         g = QApplication.primaryScreen().availableGeometry()
@@ -434,107 +464,136 @@ class AnnotationEditor(QWidget):
 # 截图页
 # ============================================================
 class PageScreenshot(QWidget):
+    # ===== 窗口高度 BUG 根治（与 Grok 诊断一致：heightForWidth 把虚高传给主窗口）=====
+    # 本页含 wordWrap 自动换行的提示标签，会让整页 hasHeightForWidth()=True，Qt 据此按
+    # 当前较窄宽度把页面高度算大，虚高一路传到主窗口，抬高窗口“首选高度”，真机上一拖
+    # 窗口就长高、缩不回去。对照 6 个正常页面 hasHeightForWidth()=False、首选高度恒 836。
+    # 修法：对外声明“高度不随宽度变化”，并把对外首选高度压到不超过侧边栏；标签内部
+    # 仍照常换行、不截断文字，实际布局照常把可用高度分给本页，视觉无变化。
+    def hasHeightForWidth(self):
+        return False
+
+    def sizeHint(self):
+        s = super().sizeHint()
+        return QSize(s.width(), min(s.height(), 700))
+
     def __init__(self):
         super().__init__()
         self._main_win = None
         self._win_hidden = False
 
         lay = QVBoxLayout(self)
+        # 与系统总览一致：ContentRoot 已有左右内边距；不设会走 Qt 默认 ~11px 再叠一层
+        lay.setContentsMargins(0, 0, 0, 0)
 
-        # ================= 第 1 排：启用截图（带框，最左） + 保存路径 =================
+        # ================= 第 1 排（压紧高度）：A截图启用 / B截图键 / C截图设置 =================
         row1 = QHBoxLayout(); lay.addLayout(row1)
 
-        gb_enable = QGroupBox("截图启用")
-        gb_enable.setProperty("titleVariant", "accent")
-        gb_enable.setFixedWidth(140)
+        # --- A 截图启用（功能区标准卡） ---
+        gb_enable = make_card("CardShotEnable")
         vb_en = QVBoxLayout(gb_enable)
+        vb_en.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        install_card_title(gb_enable, vb_en, "截图启用")
         self.checkbox_enable = QCheckBox("启用截图")
-        self.checkbox_enable.setStyleSheet(TEXT_STYLE)
+        self.checkbox_enable.setStyleSheet(TEXT_STYLE_T)
         self.checkbox_enable.stateChanged.connect(self._toggle)
         vb_en.addWidget(self.checkbox_enable)
-        row1.addWidget(gb_enable)
 
-        path_col = QVBoxLayout(); row1.addLayout(path_col, 1)
-        self.label_path = QLabel("截图保存路径：")
-        self.label_path.setStyleSheet(TEXT_STYLE)
-        path_col.addWidget(self.label_path)
-        path_row = QHBoxLayout(); path_col.addLayout(path_row)
-        self.path = QLineEdit(os.path.join(os.path.expanduser("~"), "Pictures", "ScreenshotImageSaver"))
-        self.path.setStyleSheet(LINEEDIT_STYLE)
-        self.btn_select_dir = QPushButton("另选保存")
-        self.btn_select_dir.setStyleSheet(BUTTON_STYLE)
-        self.btn_select_dir.clicked.connect(self._choose_dir)
-        path_row.addWidget(self.path)
-        path_row.addWidget(self.btn_select_dir)
-
-        # ================= 第 2 排：组合键 + 输出设置 =================
-        row2 = QHBoxLayout(); lay.addLayout(row2)
-
-        gb_mod = QGroupBox("组合键")
-        gb_mod.setProperty("titleVariant", "accent")
-        vb_mod = QVBoxLayout(gb_mod)
-
-        # —— 修饰键：Ctrl / Alt / Shift 三选一 ——
-        lb_mod = QLabel("修饰键："); lb_mod.setStyleSheet(TEXT_STYLE)
-        vb_mod.addWidget(lb_mod)
-        self.mod_group = QButtonGroup(self)          # 独占单选
-        mod_row = QHBoxLayout()
-        for m in ["Ctrl", "Alt", "Shift"]:
-            rb = QRadioButton(m); rb.setStyleSheet(TEXT_STYLE)
-            self.mod_group.addButton(rb); mod_row.addWidget(rb)
-        mod_row.addStretch()
-        vb_mod.addLayout(mod_row)
-
-        # —— 主键：左手键位 Q W E R / A S D F / Z X C V 十二选一 ——
-        lb_key = QLabel("主键（左手键位）："); lb_key.setStyleSheet(TEXT_STYLE)
-        vb_mod.addWidget(lb_key)
-        self.key_group = QButtonGroup(self)          # 独占单选
-        for line in [["Q", "W", "E", "R"], ["A", "S", "D", "F"], ["Z", "X", "C", "V"]]:
-            krow = QHBoxLayout()
-            for k in line:
-                rb = QRadioButton(k); rb.setStyleSheet(TEXT_STYLE)
-                rb.setFixedWidth(52)
-                self.key_group.addButton(rb); krow.addWidget(rb)
-            krow.addStretch()
-            vb_mod.addLayout(krow)
-        vb_mod.addStretch()
-        row2.addWidget(gb_mod, 1)
-
-        gb_out = QGroupBox("输出设置")
-        gb_out.setProperty("titleVariant", "accent")
-        vb_out = QVBoxLayout(gb_out)
         fmt_row = QHBoxLayout()
-        lb_fmt = QLabel("格式："); lb_fmt.setStyleSheet(TEXT_STYLE)
+        lb_fmt = QLabel("格式：")
+        lb_fmt.setProperty("typo", "muted")
         self.fmt_group = QButtonGroup(self)               # 格式单选
-        self.rb_png = QRadioButton("PNG"); self.rb_png.setStyleSheet(TEXT_STYLE)
-        self.rb_jpg = QRadioButton("JPG"); self.rb_jpg.setStyleSheet(TEXT_STYLE)
+        self.rb_png = QRadioButton("PNG"); self.rb_png.setStyleSheet(TEXT_STYLE_T)
+        self.rb_jpg = QRadioButton("JPG"); self.rb_jpg.setStyleSheet(TEXT_STYLE_T)
         self.fmt_group.addButton(self.rb_png); self.fmt_group.addButton(self.rb_jpg)
         self.rb_png.setChecked(True)
         fmt_row.addWidget(lb_fmt); fmt_row.addWidget(self.rb_png)
         fmt_row.addWidget(self.rb_jpg); fmt_row.addStretch()
-        vb_out.addLayout(fmt_row)
+        vb_en.addLayout(fmt_row)
+        vb_en.addStretch()                       # 顶对齐，配合 4.7 同排等高
+        row1.addWidget(gb_enable, 14)
+
+        # --- B 截图键（功能区标准卡） ---
+        gb_mod = make_card("CardShotHotkey")
+        vb_mod = QVBoxLayout(gb_mod)
+        vb_mod.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        install_card_title(gb_mod, vb_mod, "截图键")
+
+        key_grid = QGridLayout()
+        key_grid.setHorizontalSpacing(14)
+        key_grid.setVerticalSpacing(4)
+
+        self._key_sep = QFrame()
+        self._key_sep.setFrameShape(QFrame.NoFrame)     # 原生 VLine 一旦 setStyleSheet 就画不出来，改用填色细矩形
+        self._key_sep.setFixedWidth(1)
+        self._key_sep.setStyleSheet(f"background: {tk('border')};")
+        key_grid.addWidget(self._key_sep, 0, 1, 3, 1)   # 纵跨3行的竖分隔线，隔开"功能键"与"主键"两列
+
+        self.mod_group = QButtonGroup(self)          # 独占单选：功能键列，每个一行
+        for i, m in enumerate(["Ctrl", "Alt", "Shift"]):
+            rb = QRadioButton(m); rb.setStyleSheet(TEXT_STYLE_T)
+            self.mod_group.addButton(rb)
+            key_grid.addWidget(rb, i, 0)
+
+        self.key_group = QButtonGroup(self)          # 独占单选：主键列，QWERTY 三行
+        for i, line in enumerate([["Q", "W", "E", "R"], ["A", "S", "D", "F"], ["Z", "X", "C", "V"]]):
+            krow = QHBoxLayout()
+            krow.setSpacing(6)
+            for k in line:
+                rb = QRadioButton(k); rb.setStyleSheet(TEXT_STYLE_T)
+                rb.setFixedWidth(48)
+                self.key_group.addButton(rb); krow.addWidget(rb)
+            krow.addStretch()
+            key_grid.addLayout(krow, i, 2)
+
+        vb_mod.addLayout(key_grid)
+        vb_mod.addStretch()                       # 顶对齐
+        row1.addWidget(gb_mod, 26)
+
+        # --- C 截图设置（功能区标准卡） ---
+        gb_out = make_card("CardShotOutput")
+        vb_out = QVBoxLayout(gb_out)
+        vb_out.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        install_card_title(gb_out, vb_out, "截图设置")
+
+        # 保存路径：与速存图文「文件夹」同款（圆角框 + 📁）
+        path_row = QHBoxLayout()
+        self.path = QLineEdit(os.path.join(os.path.expanduser("~"), "Pictures", "ScreenshotImageSaver"))
+        self._path_icon_action = apply_folder_path_edit(self.path)
+        self.btn_select_dir = QPushButton("另选保存")
+        self.btn_select_dir.setStyleSheet(BUTTON_STYLE)
+        self.btn_select_dir.clicked.connect(self._choose_dir)
+        path_row.addWidget(self.path, 1)
+        path_row.addWidget(self.btn_select_dir)
+        vb_out.addLayout(path_row)
+
+        # 三个输出选项压成一行，省两行高度
+        chk_row = QHBoxLayout()
         self.chk_edit = QCheckBox("截图后编辑标注")
         self.chk_copy = QCheckBox("自动复制到剪贴板")
         self.chk_hide = QCheckBox("隐藏当前窗口")
         for c in (self.chk_edit, self.chk_copy, self.chk_hide):
-            c.setStyleSheet(TEXT_STYLE); vb_out.addWidget(c)
+            c.setStyleSheet(TEXT_STYLE_T); chk_row.addWidget(c)
+        chk_row.addStretch()
+        vb_out.addLayout(chk_row)
         self.chk_edit.setChecked(False)                   # ★ 默认不勾
         self.chk_copy.setChecked(True)
-        row2.addWidget(gb_out, 1)
+        vb_out.addStretch()                       # 顶对齐
+        row1.addWidget(gb_out, 60)
 
-        # ================= 第 3 排（贴底）：操作记录 + 截图预览 =================
-        row3 = QHBoxLayout(); lay.addLayout(row3, 1)   # 拉伸系数 1，撑到底部
+        # ================= 第 2 排（拉伸吃满剩余高度）：操作记录 + 截图预览 =================
+        row2 = QHBoxLayout(); lay.addLayout(row2, 1)   # 拉伸系数 1，第一行越压紧，这一排分到的高度越大
 
-        gb_log = QGroupBox("截图与操作记录")
-        gb_log.setProperty("titleVariant", "accent")
+        gb_log = make_card("CardShotLog")
         vb_log = QVBoxLayout(gb_log)
+        vb_log.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        install_card_title(gb_log, vb_log, "截图与操作记录")
         self.list = QListWidget()
         self.list.setObjectName("ShotList")
+        self.list.setProperty("recordStyle", "dashed")
         self.list.setAttribute(Qt.WA_StyledBackground, True)
-        self.list.setStyleSheet(
-            "QListWidget{color:#9fb0d7; font-size:15px;}"
-            "QListWidget::item{padding:6px 2px;}")
         self.list.setSpacing(3)                     # 行距（参考图3）
+        theme.changed.connect(self.refresh_theme)
         self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -542,14 +601,28 @@ class PageScreenshot(QWidget):
         self.list.itemDoubleClicked.connect(self._on_dblclick)
         self.list.currentItemChanged.connect(self._on_current_changed)   # ★ 选中→右侧预览
         vb_log.addWidget(self.list)
-        row3.addWidget(gb_log, 3)
+        row2.addWidget(gb_log, 3)
 
-        gb_prev = QGroupBox("截图预览")
-        gb_prev.setProperty("titleVariant", "accent")
+        gb_prev = make_card("CardShotPreview")
         vb_prev = QVBoxLayout(gb_prev)
+        vb_prev.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        install_card_title(gb_prev, vb_prev, "截图预览")
         self.preview = PreviewLabel()
-        vb_prev.addWidget(self.preview)
-        row3.addWidget(gb_prev, 2)
+        vb_prev.addWidget(self.preview, 1)
+        self.lbl_preview_meta = QLabel()
+        self.lbl_preview_meta.setAlignment(Qt.AlignHCenter)
+        self.lbl_preview_meta.setWordWrap(True)
+        # v9.9.6 修复：这个标签平时是"文件名 + 换行 + 分辨率"两行，但文件名长短不定，
+        # 长文件名换行后行数会变，wordWrap 让它的高度跟着内容/宽度波动（hasHeightForWidth）。
+        # 页面里这一块又没有 QScrollArea 兜底，波动会直接传给页面→主窗口的最小高度，
+        # 窗口在拖动/跨屏 DPI 重新布局时就会出现"越拖越高、缩不回去"——跟"速存图文"
+        # 页面之前那个问题是同一类根因。这里钉死高度（超出部分裁掉，完整信息放 tooltip），
+        # 从根上掐断这条传染链路。
+        self.lbl_preview_meta.setFixedHeight(40)
+        self.lbl_preview_meta.setProperty("typo", "muted")
+        self.lbl_preview_meta.setVisible(False)
+        vb_prev.addWidget(self.lbl_preview_meta)
+        row2.addWidget(gb_prev, 2)
 
         # 初始日志
         ensure_dir(self.path.text())
@@ -569,6 +642,16 @@ class PageScreenshot(QWidget):
         self.key_group.buttonClicked.connect(self._on_hotkey_changed)
 
     # === 日志 ===
+
+    def refresh_theme(self, *_):
+        """重刷本页控件级样式（QSS 选择器覆盖不到的部分）。"""
+        if hasattr(self, "_key_sep"):
+            self._key_sep.setStyleSheet(f"background: {tk('border')};")
+        if hasattr(self, "path"):
+            restyle_folder_path_edit(self.path, getattr(self, "_path_icon_action", None))
+        if hasattr(self, "preview"):
+            self.preview.refresh_theme()
+
     def _log(self, text):
         self.list.addItem(text)
         self.list.scrollToBottom()
@@ -690,8 +773,7 @@ class PageScreenshot(QWidget):
         try:
             ok = pixmap.save(full, fmt, quality)
             if ok:
-                self._add_shot_item(full)
-                self._log(f"📸 已保存：{full}")
+                self._add_shot_item(full)   # 唯一一条记录：文件名可点击，完整路径见 tooltip
             else:
                 self._log(f"❌ 保存失败：写入被拒绝（{full}）")
         except Exception as e:
@@ -708,12 +790,21 @@ class PageScreenshot(QWidget):
 
     def _on_current_changed(self, cur, _prev):
         if cur is None:
-            self.preview.set_image(None); return
+            self.preview.set_image(None)
+            self.lbl_preview_meta.setVisible(False)
+            return
         path = cur.data(Qt.UserRole)
         if path and os.path.exists(path):
-            self.preview.set_image(QPixmap(path))
-        else:
-            self.preview.set_image(None)
+            pix = QPixmap(path)
+            if not pix.isNull():
+                self.preview.set_image(pix)
+                meta_text = f"{os.path.basename(path)}\n{pix.width()}×{pix.height()}"
+                self.lbl_preview_meta.setText(meta_text)
+                self.lbl_preview_meta.setToolTip(meta_text)
+                self.lbl_preview_meta.setVisible(True)
+                return
+        self.preview.set_image(None)
+        self.lbl_preview_meta.setVisible(False)
 
     def _on_dblclick(self, item):
         path = item.data(Qt.UserRole)

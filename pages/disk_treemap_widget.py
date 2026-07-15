@@ -8,15 +8,42 @@ import json
 import string
 import ctypes
 
-from styles.disk_treemap import (
-    DRIVE_TAB_ACTIVE_QSS, DRIVE_TAB_ACTIVE_MAIN_QSS, DRIVE_TAB_ACTIVE_UNDERLINE_QSS,
-    DRIVE_TAB_INACTIVE_QSS, DRIVE_TAB_INACTIVE_MAIN_QSS, DRIVE_TAB_INACTIVE_UNDERLINE_QSS,
-    DRIVE_ICON_QSS, DRIVE_MAIN_BASE_QSS,
-    TAB_BAR_QSS, SCAN_BAR_QSS, SCAN_BTN_QSS, SCAN_PROGRESS_QSS, SCAN_STATUS_QSS,
-    FILES_PANEL_QSS, FILES_TITLE_QSS, FILES_LIST_QSS,
-    FALLBACK_LABEL_QSS, WEB_VIEW_QSS,
-    FILE_RANK_ROW_QSS, FILE_RANK_NUM_QSS, FILE_RANK_NAME_QSS, FILE_RANK_SIZE_QSS,
+from styles.style_all import (
+    theme,
+    fmt,
+    tk,
+    DRIVE_TAB_ACTIVE_QSS,
+    DRIVE_TAB_ACTIVE_MAIN_QSS,
+    DRIVE_TAB_ACTIVE_UNDERLINE_QSS,
+    DRIVE_TAB_INACTIVE_QSS,
+    DRIVE_TAB_INACTIVE_MAIN_QSS,
+    DRIVE_TAB_INACTIVE_UNDERLINE_QSS,
+    DRIVE_ICON_QSS,
+    DRIVE_MAIN_BASE_QSS,
+    TAB_BAR_QSS,
+    SCAN_BAR_QSS,
+    SCAN_BTN_QSS,
+    SCAN_PROGRESS_QSS,
+    SCAN_STATUS_QSS,
+    FILES_PANEL_QSS,
+    FILES_TITLE_QSS,
+    FILES_LIST_QSS,
+    FALLBACK_LABEL_QSS,
+    WEB_VIEW_QSS,
+    FILE_RANK_ROW_QSS,
+    FILE_RANK_NUM_QSS,
+    FILE_RANK_NAME_QSS,
+    FILE_RANK_SIZE_QSS,
 )
+
+# Treemap 画布底色：这是数据可视化表面，色块调色板是为深底设计的，
+# 因此两套主题下都保持深色（与 WizTree 等工具一致）。
+# 想让它跟随主题，把下面这行改成 None，_treemap_bg() 就会用 tk("canvas")。
+TREEMAP_CANVAS_BG = "#111110"
+
+
+def _treemap_bg() -> str:
+    return TREEMAP_CANVAS_BG or tk("canvas")
 from PyQt5.QtCore import Qt, QTimer, QUrl, QThread, pyqtSignal
 from PyQt5.QtGui import QFont, QFontMetrics
 from PyQt5.QtWidgets import (
@@ -403,29 +430,27 @@ class DriveTab(QWidget):
         row = QHBoxLayout()
         row.setSpacing(8)
 
-        icon = QLabel("💾")
-        icon.setStyleSheet(DRIVE_ICON_QSS)
+        self.icon = QLabel("💾")
+        self.icon.setStyleSheet(fmt(DRIVE_ICON_QSS))
         self.lbl_main = QLabel(f"{letter} 本地磁盘")
         self.lbl_main.setObjectName("DriveTabMain")
         f = QFont("Microsoft YaHei", 13, QFont.DemiBold)
         self.lbl_main.setFont(f)
-        self.lbl_main.setStyleSheet(DRIVE_MAIN_BASE_QSS)
+        self.lbl_main.setStyleSheet(fmt(DRIVE_MAIN_BASE_QSS))
 
-        row.addWidget(icon, 0)
+        row.addWidget(self.icon, 0)
         row.addWidget(self.lbl_main, 0)
         row.addStretch(1)
         lay.addLayout(row)
 
-        pct = (used_gb / total_gb * 100) if total_gb else 0
-        pct_color = "#e34948" if pct > 85 else ("#eda100" if pct > 70 else "#6f7fa8")
-        self.lbl_sub = QLabel(f"{fmt_size(used_gb)} / {fmt_size(total_gb)} · {pct:.0f}%")
+        # 使用率百分比留作字段，主题切换时要用它重算警告色
+        self._pct = (used_gb / total_gb * 100) if total_gb else 0
+        self.lbl_sub = QLabel(f"{fmt_size(used_gb)} / {fmt_size(total_gb)} · {self._pct:.0f}%")
         self.lbl_sub.setObjectName("DriveTabSub")
-        self.lbl_sub.setStyleSheet(f"color:{pct_color}; font-size:12px; background:transparent;")
         lay.addWidget(self.lbl_sub)
 
         self.underline = QFrame()
         self.underline.setFixedHeight(3)
-        self.underline.setStyleSheet(DRIVE_TAB_INACTIVE_UNDERLINE_QSS)
         lay.addWidget(self.underline)
 
         self._active = False
@@ -435,15 +460,30 @@ class DriveTab(QWidget):
         self._active = active
         self._apply_style()
 
+    def refresh_theme(self, *_):
+        """主题切换时由父组件调用。只重刷样式，不重建控件。"""
+        self.icon.setStyleSheet(fmt(DRIVE_ICON_QSS))
+        self._apply_style()
+
+    def _pct_color(self) -> str:
+        """使用率警告色：>85% 红，>70% 橙，其余跟随主题的弱化文字色。"""
+        if self._pct > 85:
+            return tk("err")
+        if self._pct > 70:
+            return tk("warn")
+        return tk("text_dim")
+
     def _apply_style(self):
+        self.lbl_sub.setStyleSheet(
+            f"color:{self._pct_color()}; font-size:12px; background:transparent;")
         if self._active:
-            self.setStyleSheet(DRIVE_TAB_ACTIVE_QSS)
-            self.lbl_main.setStyleSheet(DRIVE_TAB_ACTIVE_MAIN_QSS)
-            self.underline.setStyleSheet(DRIVE_TAB_ACTIVE_UNDERLINE_QSS)
+            self.setStyleSheet(fmt(DRIVE_TAB_ACTIVE_QSS))
+            self.lbl_main.setStyleSheet(fmt(DRIVE_TAB_ACTIVE_MAIN_QSS))
+            self.underline.setStyleSheet(fmt(DRIVE_TAB_ACTIVE_UNDERLINE_QSS))
         else:
-            self.setStyleSheet(DRIVE_TAB_INACTIVE_QSS)
-            self.lbl_main.setStyleSheet(DRIVE_TAB_INACTIVE_MAIN_QSS)
-            self.underline.setStyleSheet(DRIVE_TAB_INACTIVE_UNDERLINE_QSS)
+            self.setStyleSheet(fmt(DRIVE_TAB_INACTIVE_QSS))
+            self.lbl_main.setStyleSheet(fmt(DRIVE_TAB_INACTIVE_MAIN_QSS))
+            self.underline.setStyleSheet(fmt(DRIVE_TAB_INACTIVE_UNDERLINE_QSS))
 
 
 # ----------------------------------------------------------------------
@@ -452,7 +492,7 @@ class DriveTab(QWidget):
 _TREEMAP_HTML_TEMPLATE = """<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <style>
-  html,body{margin:0;padding:0;background:#111110;overflow:hidden;}
+  html,body{margin:0;padding:0;background:__CANVAS_BG__;overflow:hidden;}
   #wrap{position:relative;width:100vw;height:100vh;}
   canvas{display:block;}
   .tip{
@@ -588,7 +628,7 @@ function render(){
   canvas.width=W; canvas.height=H;
   const ctx=canvas.getContext('2d');
   ctx.clearRect(0,0,W,H);
-  ctx.fillStyle='#111110'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='__CANVAS_BG__'; ctx.fillRect(0,0,W,H);
 
   hitRects=[];
   if(TREE && TREE.length){
@@ -636,22 +676,28 @@ def build_treemap_html(tree, used_total):
     tree_json = json.dumps(tree, ensure_ascii=False)
     html = _TREEMAP_HTML_TEMPLATE.replace("__TREE_JSON__", tree_json)
     html = html.replace("__USED_TOTAL__", str(used_total if used_total > 0 else 1))
+    html = html.replace("__CANVAS_BG__", _treemap_bg())
     return html
 
 
 def _build_loading_html(letter: str) -> str:
     """扫描进行中的占位页面，避免大盘符扫描期间显示空白或卡死的错觉"""
+    bg     = tk("canvas")
+    txt    = tk("text_dim")
+    ring   = tk("border")
+    accent = tk("accent")
+    hint   = tk("text_faint")
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
-  html,body{{margin:0;padding:0;background:#111110;height:100%;
+  html,body{{margin:0;padding:0;background:{bg};height:100%;
     display:flex;align-items:center;justify-content:center;
     font-family:"Microsoft YaHei",sans-serif;}}
-  .box{{text-align:center;color:#6f7fa8;}}
-  .spinner{{width:34px;height:34px;border:3px solid #25345c;border-top-color:#3a8ee0;
+  .box{{text-align:center;color:{txt};}}
+  .spinner{{width:34px;height:34px;border:3px solid {ring};border-top-color:{accent};
     border-radius:50%;margin:0 auto 14px;animation:spin 0.9s linear infinite;}}
   @keyframes spin{{to{{transform:rotate(360deg);}}}}
   .txt{{font-size:13px;}}
-  .hint{{font-size:11px;color:#4a5578;margin-top:6px;}}
+  .hint{{font-size:11px;color:{hint};margin-top:6px;}}
 </style></head>
 <body><div class="box">
   <div class="spinner"></div>
@@ -661,15 +707,17 @@ def _build_loading_html(letter: str) -> str:
 
 
 def _build_idle_html() -> str:
-    """尚未扫描时的空状态页面，提示用户点击上方"开始扫描"按钮"""
-    return """<!DOCTYPE html>
+    """尚未扫描时的空状态页面，提示用户点击上方「开始扫描」按钮"""
+    bg  = tk("canvas")
+    txt = tk("text_faint")
+    return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
-  html,body{margin:0;padding:0;background:#111110;height:100%;
+  html,body{{margin:0;padding:0;background:{bg};height:100%;
     display:flex;align-items:center;justify-content:center;
-    font-family:"Microsoft YaHei",sans-serif;}
-  .box{text-align:center;color:#4a5578;}
-  .icon{font-size:32px;margin-bottom:10px;opacity:0.6;}
-  .txt{font-size:13px;}
+    font-family:"Microsoft YaHei",sans-serif;}}
+  .box{{text-align:center;color:{txt};}}
+  .icon{{font-size:32px;margin-bottom:10px;opacity:0.6;}}
+  .txt{{font-size:13px;}}
 </style></head>
 <body><div class="box">
   <div class="icon">📂</div>
@@ -717,33 +765,35 @@ class _FileRankRow(QWidget):
         lay.setContentsMargins(8, 6, 8, 6)
         lay.setSpacing(2)
 
-        self.setStyleSheet(
-            FILE_RANK_ROW_QSS
-        )
         self.setAttribute(Qt.WA_StyledBackground, True)
 
         name_row = QHBoxLayout()
         name_row.setSpacing(6)
-        lbl_rank = QLabel(f"{rank}")
-        lbl_rank.setFixedWidth(18)
-        lbl_rank.setStyleSheet(FILE_RANK_NUM_QSS)
-        lbl_name = QLabel(name)
-        lbl_name.setStyleSheet(FILE_RANK_NAME_QSS)
-        lbl_name.setWordWrap(False)
-        fm = QFontMetrics(lbl_name.font())
+        self.lbl_rank = QLabel(f"{rank}")
+        self.lbl_rank.setFixedWidth(18)
+        self.lbl_name = QLabel(name)
+        self.lbl_name.setWordWrap(False)
+        fm = QFontMetrics(self.lbl_name.font())
         elided = fm.elidedText(name, Qt.ElideMiddle, 220)
-        lbl_name.setText(elided)
-        name_row.addWidget(lbl_rank, 0)
-        name_row.addWidget(lbl_name, 1)
+        self.lbl_name.setText(elided)
+        name_row.addWidget(self.lbl_rank, 0)
+        name_row.addWidget(self.lbl_name, 1)
         lay.addLayout(name_row)
 
         size_row = QHBoxLayout()
         size_row.setContentsMargins(18, 0, 0, 0)
-        lbl_size = QLabel(size_text)
-        lbl_size.setStyleSheet(FILE_RANK_SIZE_QSS)
+        self.lbl_size = QLabel(size_text)
         size_row.addStretch(1)
-        size_row.addWidget(lbl_size, 0)
+        size_row.addWidget(self.lbl_size, 0)
         lay.addLayout(size_row)
+
+        self.refresh_theme()
+
+    def refresh_theme(self, *_):
+        self.setStyleSheet(fmt(FILE_RANK_ROW_QSS))
+        self.lbl_rank.setStyleSheet(fmt(FILE_RANK_NUM_QSS))
+        self.lbl_name.setStyleSheet(fmt(FILE_RANK_NAME_QSS))
+        self.lbl_size.setStyleSheet(fmt(FILE_RANK_SIZE_QSS))
 
 
 class DiskAnalyzerWidget(QWidget):
@@ -762,9 +812,6 @@ class DiskAnalyzerWidget(QWidget):
         # ── 盘符 Tab 栏 + 扫描按钮/进度条（同一行，紧凑）──
         self.tab_bar = QWidget()
         self.tab_bar.setObjectName("DiskTabBar")
-        self.tab_bar.setStyleSheet(
-            TAB_BAR_QSS
-        )
         tab_h = QHBoxLayout(self.tab_bar)
         tab_h.setContentsMargins(4, 0, 4, 0)
         tab_h.setSpacing(2)
@@ -774,7 +821,6 @@ class DiskAnalyzerWidget(QWidget):
 
         # ── 扫描控制条：开始扫描按钮 + 进度条 + 状态文字 ──
         self.scan_bar = QWidget()
-        self.scan_bar.setStyleSheet(SCAN_BAR_QSS)
         scan_h = QHBoxLayout(self.scan_bar)
         scan_h.setContentsMargins(12, 8, 12, 8)
         scan_h.setSpacing(10)
@@ -782,7 +828,6 @@ class DiskAnalyzerWidget(QWidget):
         self.btn_scan = QPushButton("▶ 开始扫描")
         self.btn_scan.setCursor(Qt.PointingHandCursor)
         self.btn_scan.setFixedHeight(30)
-        self.btn_scan.setStyleSheet(SCAN_BTN_QSS)
         self.btn_scan.clicked.connect(self._on_scan_clicked)
         scan_h.addWidget(self.btn_scan, 0)
 
@@ -791,11 +836,9 @@ class DiskAnalyzerWidget(QWidget):
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
-        self.progress_bar.setStyleSheet(SCAN_PROGRESS_QSS)
         scan_h.addWidget(self.progress_bar, 1)
 
         self.lbl_scan_status = QLabel("点击开始扫描该盘符")
-        self.lbl_scan_status.setStyleSheet(SCAN_STATUS_QSS)
         self.lbl_scan_status.setFixedWidth(220)
         scan_h.addWidget(self.lbl_scan_status, 0)
 
@@ -807,10 +850,10 @@ class DiskAnalyzerWidget(QWidget):
         body_h.setContentsMargins(0, 0, 0, 0)
         body_h.setSpacing(0)
 
+        self.fallback = None
         if _WEBENGINE_OK:
             self.web = QWebEngineView()
             self.web.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            self.web.setStyleSheet(WEB_VIEW_QSS)
             body_h.addWidget(self.web, 1)
         else:
             self.web = None
@@ -819,23 +862,21 @@ class DiskAnalyzerWidget(QWidget):
                 "请先执行：pip install PyQtWebEngine"
             )
             fallback.setAlignment(Qt.AlignCenter)
-            fallback.setStyleSheet(FALLBACK_LABEL_QSS)
+            self.fallback = fallback
             body_h.addWidget(fallback, 1)
 
         # 大文件排行榜：固定宽度侧栏，列出当前盘符下最大的若干个文件
         self.files_panel = QWidget()
         self.files_panel.setFixedWidth(300)
-        self.files_panel.setStyleSheet(FILES_PANEL_QSS)
         fp_lay = QVBoxLayout(self.files_panel)
         fp_lay.setContentsMargins(12, 10, 12, 10)
         fp_lay.setSpacing(6)
 
         fp_title = QLabel("最大文件 TOP 15")
-        fp_title.setStyleSheet(FILES_TITLE_QSS)
+        self.fp_title = fp_title
         fp_lay.addWidget(fp_title)
 
         self.files_list = QListWidget()
-        self.files_list.setStyleSheet(FILES_LIST_QSS)
         self.files_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.files_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.files_list.setSpacing(2)
@@ -844,11 +885,50 @@ class DiskAnalyzerWidget(QWidget):
         body_h.addWidget(self.files_panel, 0)
         root.addWidget(body, 1)
 
+        # 首次上色 + 订阅主题切换
+        self.refresh_theme()
+        theme.changed.connect(self.refresh_theme)
+
         # 初始空状态：不自动扫描，等待用户点击按钮
         if self.web is not None:
             self.web.setHtml(_build_idle_html(), QUrl("about:blank"))
 
         QTimer.singleShot(0, self.reload_drives)
+
+    # ------------------------------------------------------------------
+    def refresh_theme(self, *_):
+        """重刷全部控件级样式。只 setStyleSheet，不重建控件，不丢扫描状态。"""
+        self.tab_bar.setStyleSheet(fmt(TAB_BAR_QSS))
+        self.scan_bar.setStyleSheet(fmt(SCAN_BAR_QSS))
+        self.btn_scan.setStyleSheet(fmt(SCAN_BTN_QSS))
+        self.progress_bar.setStyleSheet(fmt(SCAN_PROGRESS_QSS))
+        self.lbl_scan_status.setStyleSheet(fmt(SCAN_STATUS_QSS))
+        self.files_panel.setStyleSheet(fmt(FILES_PANEL_QSS))
+        self.fp_title.setStyleSheet(fmt(FILES_TITLE_QSS))
+        self.files_list.setStyleSheet(fmt(FILES_LIST_QSS))
+
+        if self.web is not None:
+            self.web.setStyleSheet(fmt(WEB_VIEW_QSS))
+        if self.fallback is not None:
+            self.fallback.setStyleSheet(fmt(FALLBACK_LABEL_QSS))
+
+        # 动态子控件：盘符 Tab 与文件排行条目
+        for tab in self.tabs:
+            tab.refresh_theme()
+        for i in range(self.files_list.count()):
+            row = self.files_list.itemWidget(self.files_list.item(i))
+            if row is not None and hasattr(row, "refresh_theme"):
+                row.refresh_theme()
+
+        # WebEngine 页面：只有「未扫描」和「已扫描」两种静态页需要重绘。
+        # 扫描进行中不动它，否则会打断 loading 动画。
+        if self.web is not None and not (
+                self._scan_worker is not None and self._scan_worker.isRunning()):
+            d = self.drives_data[self.current_idx] if self.drives_data else None
+            if d and d.get("tree") is not None:
+                self.web.setHtml(build_treemap_html(d["tree"], d["used"]), QUrl("about:blank"))
+            else:
+                self.web.setHtml(_build_idle_html(), QUrl("about:blank"))
 
     def reload_drives(self):
         """扫描真实磁盘；失败则用演示数据兜底，保证界面始终可预览"""
@@ -1003,4 +1083,3 @@ class DiskAnalyzerWidget(QWidget):
             self.web.setHtml(html, QUrl("about:blank"))
         self._render_files_list(largest_files)
         self._set_scan_ui_idle(scanned=True)
-        self._render_files_list(largest_files)

@@ -10,19 +10,39 @@ import time
 # ==================== 第三方：PyQt5 ====================
 from PyQt5.QtCore import (
     Qt, QStandardPaths, QTimer, pyqtSignal,
-    QAbstractNativeEventFilter, QCoreApplication,
+    QAbstractNativeEventFilter, QCoreApplication, QSize,
 )
-from PyQt5.QtGui import QKeySequence
+from PyQt5.QtGui import QKeySequence, QIcon, QPixmap, QPainter, QFont, QColor
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QListWidget,
-    QCheckBox, QFileDialog, QGroupBox, QShortcut,
+    QCheckBox, QFileDialog, QShortcut,
     QComboBox, QTabWidget, QStackedWidget,
     QRadioButton, QButtonGroup,
+    QFrame, QSizePolicy,
 )
 
 # ==================== 本地模块 ====================
-from styles.common_styles import TEXT_STYLE, BUTTON_STYLE, LINEEDIT_STYLE
+from styles.style_all import (
+    TEXT_STYLE,
+    BUTTON_STYLE,
+    LINEEDIT_STYLE,
+    install_card_title,
+    make_card,
+    apply_folder_path_edit,
+    restyle_folder_path_edit,
+    make_glyph_icon,
+    restyle_card_frame,
+    restyle_card_title,
+    content_primary_color,
+    content_secondary_color,
+    CARD_TOP_GAP,
+    CARD_LEFT_GAP,
+    CARD_RIGHT_GAP,
+    CARD_BOTTOM_GAP,
+    theme,
+    tk,
+)
 
 # ==================== Windows API ====================
 import ctypes
@@ -228,6 +248,76 @@ def _check_chrome_running() -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════
+# 预览标签（格式对齐「截图工具」PageScreenshot.PreviewLabel）
+# · 主区域 stretch 占满：占位文案居中 / 图片等比缩放 / 非图片记录显示文字
+# · 尺寸随控件 resize 重算；minimumSizeHint 钉死，避免长文字把窗口顶高
+# ═══════════════════════════════════════════════════════════════
+class FastPreviewLabel(QLabel):
+    _PLACEHOLDER = "（选中左侧记录可预览）"
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._src = None          # QPixmap or None
+        self._mode = "empty"      # empty | image | text
+        self.setAlignment(Qt.AlignCenter)
+        self.setMinimumSize(220, 220)
+        self.setWordWrap(True)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._apply_style()
+        self.setText(self._PLACEHOLDER)
+
+    def minimumSizeHint(self):
+        # 阻断 wordWrap 文本的 heightForWidth 向上传染（同截图预览的尺寸兜底思路）
+        return QSize(220, 220)
+
+    def sizeHint(self):
+        return QSize(280, 280)
+
+    def refresh_theme(self, *_):
+        self._apply_style()
+
+    def _apply_style(self):
+        self.setStyleSheet(f"background:transparent; color:{tk('text_dim')};")
+
+    def show_empty(self):
+        self._src = None
+        self._mode = "empty"
+        self._apply_style()
+        self.clear()
+        self.setAlignment(Qt.AlignCenter)
+        self.setText(self._PLACEHOLDER)
+
+    def set_image(self, pixmap):
+        self._src = pixmap if (pixmap is not None and not pixmap.isNull()) else None
+        if self._src is None:
+            self.show_empty()
+            return
+        self._mode = "image"
+        self._apply_style()
+        self.setAlignment(Qt.AlignCenter)
+        self._rescale()
+
+    def set_text_content(self, text: str):
+        """非图片运行记录：主区域展示文字（顶左对齐，格式贴近截图预览的主区占用）。"""
+        self._src = None
+        self._mode = "text"
+        self._apply_style()
+        self.clear()
+        self.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.setText(text or self._PLACEHOLDER)
+
+    def _rescale(self):
+        if self._mode != "image" or self._src is None:
+            return
+        self.setPixmap(self._src.scaled(
+            self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def resizeEvent(self, e):
+        self._rescale()
+        super().resizeEvent(e)
+
+
+# ═══════════════════════════════════════════════════════════════
 # PageFastSave
 # ═══════════════════════════════════════════════════════════════
 class PageFastSave(QWidget):
@@ -244,206 +334,325 @@ class PageFastSave(QWidget):
         w.style().unpolish(w)
         w.style().polish(w)
 
+    @staticmethod
+    def _set_qprop(w, name, value):
+        """设置一个 Qt 动态属性并刷新样式——用于命中 app.qss / app_light.qss 里的属性选择器。"""
+        w.setProperty(name, value)
+        w.style().unpolish(w)
+        w.style().polish(w)
+
+    @staticmethod
+    def _make_glyph_icon(glyph: str, px: int = 16, color: str = "#8fa3d9") -> QIcon:
+        """兼容旧调用；实现已迁到 style_all.make_glyph_icon。"""
+        return make_glyph_icon(glyph, px=px, color=color)
+
+    # ===== 窗口高度 BUG 根治（与 Grok 诊断一致：heightForWidth 把虚高传给主窗口）=====
+    # 本页含 wordWrap 自动换行标签，会让整页 hasHeightForWidth()=True。Qt 据此按当前
+    # （较窄的）宽度把页面高度算大，这个虚高顺着布局链一路传到主窗口，抬高了窗口的
+    # “首选高度”，于是真机上一拖标题栏，窗口就往首选高度长高、且缩不回去（切到没有此
+    # 特性的页面才松开）。对照 6 个正常页面：它们 hasHeightForWidth()=False，窗口首选
+    # 高度稳定在侧边栏决定的 836（<900），从不长高。
+    # 修法：本页对外声明“高度不随宽度变化”，并把对外“首选高度”压到不超过侧边栏——
+    #   · 标签内部仍照常换行，不截断文字（只是不把该属性外传给窗口）；
+    #   · 实际布局仍会把可用高度分配给本页，Expanding 子控件照常填满，视觉无变化。
+    def hasHeightForWidth(self):
+        return False
+
+    def sizeHint(self):
+        s = super().sizeHint()
+        return QSize(s.width(), min(s.height(), 700))
+
     def __init__(self):
         super().__init__()
         lay = QVBoxLayout(self)
-        lay.setSpacing(3)
-        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setSpacing(9)
+        # 与系统总览一致：ContentRoot 已有左右内边距，页面不再叠第二层
+        lay.setContentsMargins(0, 0, 0, 0)
 
         # ══════════ 顶部两卡片 ══════════
         row_top = QHBoxLayout()
-        row_top.setSpacing(6)
+        row_top.setSpacing(8)
         lay.addLayout(row_top)
 
         # ── 最左：速存启用（总开关，与左侧菜单 LED 联动） ──
-        gb_enable = QGroupBox("速存启用")
-        gb_enable.setProperty("titleVariant", "accent")
-        gb_enable.setObjectName("CardFastEnable")
+        self._theme_frames = []
+        self._theme_titles = []
+        self._theme_secondary_bold = []
+        self._theme_secondary_plain = []
+
+        gb_enable = make_card("CardFastEnable")
+        gb_enable.setMinimumWidth(150)
+        self._theme_frames.append(gb_enable)
         enable_box = QVBoxLayout(gb_enable)
-        enable_box.setSpacing(3)
-        enable_box.setContentsMargins(8, 4, 8, 4)
+        enable_box.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        enable_box.setSpacing(0)
+        title_enable = install_card_title(gb_enable, enable_box, "速存启用")
+        self._theme_titles.append(title_enable)
 
         self.chk_enable_all = QCheckBox("启用速存")
+        self.chk_enable_all.setStyleSheet("background: transparent;")
         enable_box.addWidget(self.chk_enable_all)
-        enable_box.addStretch(1)
+        enable_box.addSpacing(8)
 
-        # ── 速存图片 ──
-        gb_img  = QGroupBox("速存图片")
-        gb_img.setProperty("titleVariant", "accent")
-        gb_img.setObjectName("CardFastAuto")
-        img_box = QVBoxLayout(gb_img)
-        img_box.setSpacing(3)
-        img_box.setContentsMargins(8, 4, 8, 4)
-
-        self.chk_imgonly = QCheckBox("启用速存图片")
-        self.chk_imgonly.setVisible(False)  # 子开关不展示，由速存启用总开关控制
-
-        # 插件状态（状态灯 + 提示文字）—— 仅状态灯，无刷新按钮
+        # 插件状态（状态灯 + 提示文字）—— 所有更新都直接显示在这一行，不再单独维护问题记录列表
         row_plugin = QHBoxLayout()
         row_plugin.setSpacing(4)
         row_plugin.setContentsMargins(0, 0, 0, 0)
 
         self.lbl_plugin_dot = QLabel("●")
         self.lbl_plugin_dot.setFixedWidth(16)
-        self.lbl_plugin_dot.setStyleSheet("color: #f0a500; font-size: 14px;")  # 初始黄灯：检测中
+        self.lbl_plugin_dot.setStyleSheet("background: transparent; color: #f0a500; font-size: 14px;")  # 初始黄灯：检测中
 
         self.lbl_nm_status = QLabel("检测中...")
         self.lbl_nm_status.setWordWrap(True)
+        self.lbl_nm_status.setStyleSheet("background: transparent;")
         self._typo(self.lbl_nm_status, "muted")
 
         row_plugin.addWidget(self.lbl_plugin_dot)
         row_plugin.addWidget(self.lbl_nm_status, 1)
-        img_box.addLayout(row_plugin)
+        enable_box.addLayout(row_plugin)
+        enable_box.addStretch(1)   # 内容顶部对齐，多余高度留在卡片底部
 
-        # 快捷键（单行）
+        # ── 速存图片 ──
+        gb_img  = make_card("CardFastAuto")
+        self._theme_frames.append(gb_img)
+        img_box = QVBoxLayout(gb_img)
+        img_box.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        img_box.setSpacing(0)
+        title_img = install_card_title(gb_img, img_box, "速存图片")
+        self._theme_titles.append(title_img)
+
+        self.chk_imgonly = QCheckBox("启用速存图片")
+        self.chk_imgonly.setVisible(False)  # 子开关不展示，由速存启用总开关控制
+
+        # 安装按钮 + 提示语（原来的“快捷键 Alt+1”整块不再展示，只保留隐藏对象供内部逻辑引用）
         row_kb = QHBoxLayout()
-        row_kb.setSpacing(4)
-        self.btn_plugin_help = QPushButton("?")
-        self.btn_plugin_help.setFixedSize(22, 22)
+        row_kb.setSpacing(6)
+        self.btn_plugin_help = QPushButton("安装")
         self.btn_plugin_help.setToolTip("如何安装速存图片插件 MV3")
-        self.btn_plugin_help.setStyleSheet(
-            "QPushButton { padding: 0; font-size: 13px; font-weight: bold; }"
-        )
+        self.btn_plugin_help.setProperty("kind", "mini")
+        self.btn_plugin_help.style().unpolish(self.btn_plugin_help)
+        self.btn_plugin_help.style().polish(self.btn_plugin_help)
         row_kb.addWidget(self.btn_plugin_help)
-        row_kb.addWidget(QLabel("快捷键"))
+
+        lbl_img_hint = QLabel("鼠标停在图片上，按 Alt+1 保存原图")
+        lbl_img_hint.setWordWrap(True)
+        lbl_img_hint.setStyleSheet("background: transparent;")
+        self._typo(lbl_img_hint, "muted")
+        row_kb.addWidget(lbl_img_hint, 1)
+        img_box.addLayout(row_kb)
+        img_box.addSpacing(6)
+
+        # 快捷键下拉框保留对象（内部逻辑仍会用到），但不再显示在界面上
         self.combo_img_hotkey = QComboBox()
         self.combo_img_hotkey.setObjectName("FastSaveHotkey")
         self.combo_img_hotkey.addItems(["Alt+1"])
+        self.combo_img_hotkey.setItemIcon(0, self._make_glyph_icon("⌨", color=content_secondary_color()))
         self.combo_img_hotkey.setCurrentText("Alt+1")
         self.combo_img_hotkey.setEnabled(False)   # 固定 Alt+1，不提供改键
-        self.combo_img_hotkey.setFixedWidth(100)
-        row_kb.addWidget(self.combo_img_hotkey)
-        row_kb.addStretch(1)
-        img_box.addLayout(row_kb)
+        self.combo_img_hotkey.setVisible(False)
 
-        lbl_img_hint = QLabel("（在浏览器里把鼠标停在图片上，按 Alt+1 保存原图）")
-        lbl_img_hint.setWordWrap(True)
-        self._typo(lbl_img_hint, "muted")
-        img_box.addWidget(lbl_img_hint)
+        # 保存路径 —— 全局「文件夹路径」样式（圆角框 + 📁）
+        row_path = QHBoxLayout()
+        row_path.setSpacing(4)
+        self.save_path = QLineEdit("")
+        self._path_icon_action = apply_folder_path_edit(self.save_path)
+        row_path.addWidget(self.save_path, 1)
+        img_box.addLayout(row_path)
+        img_box.addSpacing(6)
+
+        self.btn_choose_dir = QPushButton("另选目录")
+        img_box.addWidget(self.btn_choose_dir)
+        img_box.addStretch(1)
 
         # ── 速存文本 ──
-        gb_txt  = QGroupBox("速存文本")
-        gb_txt.setProperty("titleVariant", "accent")
-        gb_txt.setObjectName("CardFastManual")
+        gb_txt  = make_card("CardFastManual")
+        self._theme_frames.append(gb_txt)
         txt_box = QVBoxLayout(gb_txt)
-        txt_box.setSpacing(3)
-        txt_box.setContentsMargins(8, 4, 8, 4)
+        txt_box.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        txt_box.setSpacing(0)
+        title_txt = install_card_title(gb_txt, txt_box, "速存文本")
+        self._theme_titles.append(title_txt)
 
         self.chk_manual = QCheckBox("启用速存文本")
         self.chk_manual.setVisible(False)  # 子开关不展示，由速存启用总开关控制
 
-        txt_box.addWidget(QLabel("文本快捷键"))
+        lbl_hint = QLabel("可快速创建主体同名文本文件")
+        lbl_hint.setWordWrap(True)
+        lbl_hint.setStyleSheet("background: transparent;")
+        self._typo(lbl_hint, "muted")
+        txt_box.addWidget(lbl_hint)
+        txt_box.addSpacing(6)
         self._txt_hotkey_group = QButtonGroup(self)
         row_radios = QHBoxLayout()
         row_radios.setSpacing(4)
         self._txt_radio = {}
         for key in ["F3", "F4"]:
             rb = QRadioButton(key)
+            rb.setStyleSheet("background: transparent;")
             self._txt_radio[key] = rb
             self._txt_hotkey_group.addButton(rb)
             row_radios.addWidget(rb)
         self._txt_radio["F4"].setChecked(True)
         row_radios.addStretch(1)
         txt_box.addLayout(row_radios)
+        txt_box.addStretch(1)
 
-        lbl_hint = QLabel("（全局热键，在资源管理器操作即可生效）")
-        lbl_hint.setWordWrap(True)
-        self._typo(lbl_hint, "muted")
-        txt_box.addWidget(lbl_hint)
-
-        # ── 速建文件夹 ──
-        gb_mkdir = QGroupBox("速建文件夹")
-        gb_mkdir.setProperty("titleVariant", "accent")
-        gb_mkdir.setObjectName("CardFastMkdir")
+        # ── 速建文件夹（回到顶部，与 A/B/C 同排） ──
+        gb_mkdir = make_card("CardFastMkdir")
+        gb_mkdir.setMinimumWidth(230)
+        self._theme_frames.append(gb_mkdir)
         mkdir_box = QVBoxLayout(gb_mkdir)
-        mkdir_box.setSpacing(3)
-        mkdir_box.setContentsMargins(8, 4, 8, 4)
+        mkdir_box.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        mkdir_box.setSpacing(0)
+        title_mkdir = install_card_title(gb_mkdir, mkdir_box, "速建文件夹")
+        self._theme_titles.append(title_mkdir)
 
         self.chk_mkdir = QCheckBox("启用速建文件夹")
         self.chk_mkdir.setVisible(False)  # 子开关不展示，由速存启用总开关控制
 
-        mkdir_box.addWidget(QLabel("文件夹快捷键"))
         row_mkdir_key = QHBoxLayout()
         row_mkdir_key.setSpacing(4)
-        row_mkdir_key.addWidget(QLabel("顺序新建"))
+        lbl_seq = QLabel("顺序新建")
+        lbl_seq.setStyleSheet(f"background:transparent; color:{content_secondary_color()}; font-weight:600;")
+        self._theme_secondary_bold.append(lbl_seq)
+        row_mkdir_key.addWidget(lbl_seq)
         self._mkdir_hotkey_group = QButtonGroup(self)
         self._mkdir_radio = {}
         for key in ["F5", "F6", "F7", "F8"]:
             rb = QRadioButton(key)
+            rb.setStyleSheet("background: transparent;")
             self._mkdir_radio[key] = rb
             self._mkdir_hotkey_group.addButton(rb)
             row_mkdir_key.addWidget(rb)
         self._mkdir_radio["F8"].setChecked(True)
         row_mkdir_key.addStretch(1)
         mkdir_box.addLayout(row_mkdir_key)
+        mkdir_box.addSpacing(6)
 
-        row_mkdir_direct = QHBoxLayout()
-        row_mkdir_direct.setSpacing(4)
-        row_mkdir_direct.addWidget(QLabel("F9 直接新建"))
+        row_mkdir_f9 = QHBoxLayout()
+        row_mkdir_f9.setSpacing(4)
+        lbl_f9 = QLabel("F9 直接新建")
+        lbl_f9.setStyleSheet(f"background:transparent; color:{content_secondary_color()};")
+        self._theme_secondary_plain.append(lbl_f9)
+        row_mkdir_f9.addWidget(lbl_f9)
         self.mkdir_name = QLineEdit("Grok")
         self.mkdir_name.setPlaceholderText("默认 Grok")
-        self.mkdir_name.setFixedWidth(120)
-        row_mkdir_direct.addWidget(self.mkdir_name)
-        row_mkdir_direct.addStretch(1)
-        mkdir_box.addLayout(row_mkdir_direct)
+        self.mkdir_name.setFixedWidth(100)
+        self.mkdir_name.setProperty("inputStyle", "underline")
+        self.mkdir_name.style().unpolish(self.mkdir_name)
+        self.mkdir_name.style().polish(self.mkdir_name)
+        row_mkdir_f9.addWidget(self.mkdir_name)
+        row_mkdir_f9.addStretch(1)
+        mkdir_box.addLayout(row_mkdir_f9)
+        mkdir_box.addSpacing(4)
 
-        lbl_mkdir_hint = QLabel("（选中文件夹后按所选键顺序新建；未选中任何项时按 F9 直接新建上方名称的文件夹）")
+        row_mkdir_f10 = QHBoxLayout()
+        row_mkdir_f10.setSpacing(4)
+        lbl_f10 = QLabel("F10 直接新建")
+        lbl_f10.setStyleSheet(f"background:transparent; color:{content_secondary_color()};")
+        self._theme_secondary_plain.append(lbl_f10)
+        row_mkdir_f10.addWidget(lbl_f10)
+        self.mkdir_name_b = QLineEdit("Qwen")
+        self.mkdir_name_b.setPlaceholderText("默认 Qwen")
+        self.mkdir_name_b.setFixedWidth(100)
+        self.mkdir_name_b.setProperty("inputStyle", "underline")
+        self.mkdir_name_b.style().unpolish(self.mkdir_name_b)
+        self.mkdir_name_b.style().polish(self.mkdir_name_b)
+        row_mkdir_f10.addWidget(self.mkdir_name_b)
+        row_mkdir_f10.addStretch(1)
+        mkdir_box.addLayout(row_mkdir_f10)
+        mkdir_box.addSpacing(6)
+
+        lbl_mkdir_hint = QLabel("选中文件夹按所选键顺序新建；未选中时 F9/F10 直接新建对应文件夹")
         lbl_mkdir_hint.setWordWrap(True)
+        lbl_mkdir_hint.setStyleSheet("background: transparent;")
         self._typo(lbl_mkdir_hint, "muted")
         mkdir_box.addWidget(lbl_mkdir_hint)
+        mkdir_box.addStretch(1)
 
-        row_top.addWidget(gb_enable)
-        row_top.addWidget(gb_img)
-        row_top.addWidget(gb_txt)
-        row_top.addWidget(gb_mkdir)
-        row_top.setStretch(0, 0)   # 速存启用：固定宽度不拉伸
-        row_top.setStretch(1, 1)
-        row_top.setStretch(2, 1)
-        row_top.setStretch(3, 1)
+        row_top.addWidget(gb_enable, 10)   # 速存启用：约 10%
+        row_top.addWidget(gb_img, 30)      # 速存图片：37 减少 20% → 约 30%
+        row_top.addWidget(gb_txt, 11)      # 速存文本：18 减少 40% → 约 11%
+        row_top.addWidget(gb_mkdir, 49)    # 速建文件夹：吸收 B/C 让出的份额，尽量加大 → 约 49%
 
-        # ══════════ 路径 ══════════
-        row_p = QHBoxLayout()
-        row_p.setSpacing(4)
-        self.label_path = QLabel("保存路径：")
-        self.save_path      = QLineEdit("")
-        self.btn_choose_dir = QPushButton("另选目录")
-        self.btn_choose_dir.setFixedWidth(96)
-        row_p.addWidget(self.label_path)
-        row_p.addWidget(self.save_path)
-        row_p.addWidget(self.btn_choose_dir)
-        lay.addLayout(row_p)
+        # 顶部四卡片整体限高，进一步降低高度
+        # 注：这里必须用 setFixedHeight（同时钉住上下限），不能只用 setMaximumHeight。
+        # 卡片内部有 lbl_nm_status 这种 setWordWrap(True) 的标签，心跳刷新时文字
+        # 内容/粗细会变，导致其内部布局要的高度也跟着变；如果只封了上限，这个
+        # 变化仍会通过 sizeHint 向外层（row_top → 页面 → 主窗口）渗透，使主窗口的
+        # 最小高度被悄悄推高——顶层窗口不能比这个最小高度还小，于是窗口只会越
+        # 变越高、不会缩回去（表现为"移动一次窗口，内容就往下掉一截"）。
+        # setFixedHeight 会把该 QWidget 的 sizeHint 直接钉死在这个值上，内部子控件
+        # 再怎么变化都不会再影响外层布局的尺寸计算。
+        for _card in (gb_enable, gb_img, gb_txt, gb_mkdir):
+            _card.setFixedHeight(175)
 
-        # ══════════ 日志区：上「运行记录」/ 下「问题记录」 ══════════
-        lay.addWidget(QLabel("运行记录"))
+        # ══════════ 底部：运行记录（大，占主要空间） + 预览区（右侧，选中左侧记录可预览） ══════════
+        row_bottom = QHBoxLayout()
+        row_bottom.setSpacing(8)
+        lay.addLayout(row_bottom, 1)   # 底部区域吸收窗口剩余高度
+
+        card_runlog = make_card("CardFastRunLog")
+        self._theme_frames.append(card_runlog)
+        runlog_box = QVBoxLayout(card_runlog)
+        runlog_box.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        runlog_box.setSpacing(0)
+        title_runlog = install_card_title(card_runlog, runlog_box, "运行记录")
+        self._theme_titles.append(title_runlog)
+
         self.list_widget = QListWidget()
-        self.list_widget.setObjectName("FastSaveList")
         self.list_widget.setAttribute(Qt.WA_StyledBackground, True)
         self.list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.list_widget.setUniformItemSizes(True)
-        lay.addWidget(self.list_widget, 3)          # 运行记录占大头
+        self.list_widget.setSpacing(3)  # 与截图工具记录列表一致
+        self.list_widget.setProperty("recordStyle", "dashed")   # 只保留上边虚线，滚动条重做
+        self.list_widget.style().unpolish(self.list_widget)
+        self.list_widget.style().polish(self.list_widget)
+        runlog_box.addWidget(self.list_widget, 1)
 
-        prob_head = QHBoxLayout()
-        prob_head.addWidget(QLabel("问题记录（诊断 / 连接 / 错误）"))
-        self.btn_clear_problems = QPushButton("清空")
-        self.btn_clear_problems.setFixedWidth(56)
-        prob_head.addStretch(1)
-        prob_head.addWidget(self.btn_clear_problems)
-        lay.addLayout(prob_head)
-        self.problem_widget = QListWidget()
-        self.problem_widget.setObjectName("FastSaveList")
-        self.problem_widget.setAttribute(Qt.WA_StyledBackground, True)
-        self.problem_widget.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
-        self.problem_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.problem_widget.setStyleSheet("font-size: 11px;")   # 问题记录字体小一些
-        lay.addWidget(self.problem_widget, 1)       # 问题记录占小头
+        # 宽度比对齐截图工具：记录 3 : 预览 2
+        row_bottom.addWidget(card_runlog, 3)
+
+        # ── 预览区：格式对齐「截图工具 → 截图预览」──────────────────────────
+        #   主区 stretch 吃满高度（占位/图/文字）+ 底部固定 meta 行
+        card_preview = make_card("CardFastPreview")
+        self._theme_frames.append(card_preview)
+        preview_box = QVBoxLayout(card_preview)
+        preview_box.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        preview_box.setSpacing(0)
+        title_preview = install_card_title(card_preview, preview_box, "预览区")
+        self._theme_titles.append(title_preview)
+
+        self.preview = FastPreviewLabel()
+        preview_box.addWidget(self.preview, 1)
+
+        self.lbl_preview_meta = QLabel()
+        self.lbl_preview_meta.setAlignment(Qt.AlignHCenter)
+        self.lbl_preview_meta.setWordWrap(True)
+        # 钉死高度：文件名过长交给 tooltip，避免 heightForWidth 顶高主窗口
+        self.lbl_preview_meta.setFixedHeight(40)
+        self.lbl_preview_meta.setProperty("typo", "muted")
+        self.lbl_preview_meta.setVisible(False)
+        preview_box.addWidget(self.lbl_preview_meta)
+
+        row_bottom.addWidget(card_preview, 2)
+
+        self.list_widget.currentItemChanged.connect(self._on_runlog_item_selected)
+
+        self._theme_glyph_actions = [
+            (self._path_icon_action, "📁"),
+        ]
+        self._theme_glyph_combo_items = [
+            (self.combo_img_hotkey, 0, "⌨"),
+        ]
 
         # ══════════ 信号与槽 ══════════
         self.log_sig.connect(self._append_log)
         self.plugin_status_sig.connect(self._apply_plugin_ui)
         self.btn_choose_dir.clicked.connect(self._choose_dir)
         self.btn_plugin_help.clicked.connect(self._show_plugin_help)
-        self.btn_clear_problems.clicked.connect(self.problem_widget.clear)
         self.chk_imgonly.toggled.connect(self._on_imgonly_toggled)
         self.chk_manual.toggled.connect(self._on_manual_toggled)
         self.combo_img_hotkey.currentTextChanged.connect(self._on_img_hotkey_changed)
@@ -465,6 +674,7 @@ class PageFastSave(QWidget):
         self._imgonly_timer.timeout.connect(self._scan_imgonly_files)
 
         # 心跳：每 5 秒自动刷新插件连接状态
+        self._closing = False   # 主窗口关闭时置 True，阻止后台检测线程再碰已销毁的界面
         self._nm_check_timer = QTimer(self)
         self._nm_check_timer.setInterval(5000)
         self._nm_check_timer.timeout.connect(self._update_nm_status)
@@ -480,13 +690,16 @@ class PageFastSave(QWidget):
         self._sc_manual.activated.connect(self.manual_fast_save)
         self._sc_manual.setEnabled(False)
 
-        # 速建文件夹热键（F9）
+        # 速建文件夹热键（顺序新建，F5-F8 可选）
         self._mkdir_hotkey_id     = 0x1003
         self._mkdir_hotkey_filter = None
         self._mkdir_hotkey_registered = False
-        # 直接新建热键（F9）
+        # 直接新建 A（F9）
         self._mkdir_direct_id     = 0x1004
         self._mkdir_direct_filter = None
+        # 直接新建 B（F10）
+        self._mkdir_direct_b_id     = 0x1005
+        self._mkdir_direct_b_filter = None
         self.chk_mkdir.toggled.connect(self._on_mkdir_toggled)
 
         self.clipboard = QApplication.clipboard()
@@ -494,6 +707,68 @@ class PageFastSave(QWidget):
 
         self._init_save_dir()
         self._enter_idle(reset_switches=True)
+
+        theme.changed.connect(self._apply_theme)
+
+    def _apply_theme(self, *_args):
+        """主题切换时重刷卡片外观（内联样式方案，不吃全局 QSS 级联，需手动重刷）。
+        注：记录列表虚线框 / 下划线输入框 / 迷你按钮已迁移到 app.qss、app_light.qss 的
+        属性选择器（recordStyle / inputStyle / kind），会随应用级样式表切换自动生效，
+        这里只需要处理内联画色的部分：卡片外观、标题、次要文字、以及程序绘制的符号图标。"""
+        for frame in self._theme_frames:
+            restyle_card_frame(frame)
+        for lbl in self._theme_titles:
+            restyle_card_title(lbl)
+        secondary = content_secondary_color()
+        for lbl in self._theme_secondary_bold:
+            lbl.setStyleSheet(f"background:transparent; color:{secondary}; font-weight:600;")
+        for lbl in self._theme_secondary_plain:
+            lbl.setStyleSheet(f"background:transparent; color:{secondary};")
+        if hasattr(self, "save_path"):
+            restyle_folder_path_edit(self.save_path, getattr(self, "_path_icon_action", None))
+        for action, glyph in getattr(self, "_theme_glyph_actions", []):
+            if action is getattr(self, "_path_icon_action", None):
+                continue  # 已由 restyle_folder_path_edit 处理
+            action.setIcon(self._make_glyph_icon(glyph, color=secondary))
+        for combo, idx, glyph in getattr(self, "_theme_glyph_combo_items", []):
+            combo.setItemIcon(idx, self._make_glyph_icon(glyph, color=secondary))
+        if hasattr(self, "preview"):
+            self.preview.refresh_theme()
+
+    _IMG_LOG_RE = re.compile(r"已保存图片[：:]\s*(.+?\.(?:jpg|jpeg|png|gif|bmp|webp))", re.IGNORECASE)
+
+    def _on_runlog_item_selected(self, current, _previous):
+        """预览区联动（格式对齐截图工具）：
+        · 图片记录 → 主区等比图 + 底部「文件名\\n宽×高」
+        · 其它记录 → 主区文字；无选中 → 居中占位文案
+        """
+        if current is None:
+            self.preview.show_empty()
+            self.lbl_preview_meta.clear()
+            self.lbl_preview_meta.setVisible(False)
+            return
+
+        text = current.text()
+
+        m = self._IMG_LOG_RE.search(text)
+        if m:
+            filename = m.group(1).strip()
+            full_path = os.path.join(self.save_path.text().strip(), filename)
+            if os.path.isfile(full_path):
+                pix = QPixmap(full_path)
+                if not pix.isNull():
+                    self.preview.set_image(pix)
+                    # 与截图预览一致：文件名一行，分辨率一行
+                    meta_text = f"{filename}\n{pix.width()}×{pix.height()}"
+                    self.lbl_preview_meta.setText(meta_text)
+                    self.lbl_preview_meta.setToolTip(meta_text)
+                    self.lbl_preview_meta.setVisible(True)
+                    return
+
+        # 非图片记录（或图片文件已找不到）：主区文字，隐藏 meta
+        self.preview.set_text_content(text)
+        self.lbl_preview_meta.clear()
+        self.lbl_preview_meta.setVisible(False)
 
     # ────────────────────────────────────────
     # 对外接口（兼容旧版 server.py）
@@ -545,6 +820,9 @@ class PageFastSave(QWidget):
         GREEN, RED, YELLOW = "#4caf50", "#e05252", "#f0a500"
 
         def _do_check():
+            # 主窗口正在关闭 / 已关闭：这次检测的结果不用再传回界面了，直接退出
+            if self._closing:
+                return
             # 1. 端口被占用 → 服务起不来，肯定不能用 → 红
             if _ws_server_ok is False:
                 self._set_plugin_ui(RED, f"❌ 端口 {_WS_PORT} 被占用，无法监听（不能用）")
@@ -559,38 +837,45 @@ class PageFastSave(QWidget):
 
             # 3. 有连接且心跳新鲜 → 能用 → 绿
             if has_sock and secs < _WS_PING_TTL:
-                self._set_plugin_ui(GREEN, f"✓ 插件已连接（{int(secs)}s 前心跳）", bold=True)
+                self._set_plugin_ui(GREEN, f"插件已连接\n{int(secs)}s 前心跳", bold=True)
                 return
             # 4. 有连接但心跳超时 → 可能挂起，无法判定 → 黄
             if has_sock and secs >= _WS_PING_TTL:
-                self._set_plugin_ui(YELLOW, f"⚠ 连接存在但 {int(secs)}s 无心跳（插件可能挂起）")
+                self._set_plugin_ui(YELLOW, f"⚠ 连接存在但无心跳\n{int(secs)}s 无心跳，插件可能挂起")
                 return
             # 5. 刚断开不久 → 可能马上重连，无法判定 → 黄
             if secs < 120:
-                self._set_plugin_ui(YELLOW, f"⚠ 插件已断开（{int(secs)}s 前最后心跳）")
+                self._set_plugin_ui(YELLOW, f"⚠ 插件已断开\n{int(secs)}s 前最后心跳")
                 return
 
             # 6. 从未连接 / 很久没连 → 看 Chrome 是否在运行
             if _check_chrome_running():
                 # Chrome 在跑但插件没连上 → 等待中 → 黄
-                self._set_plugin_ui(YELLOW, "● Chrome 运行中，等待插件连接…")
+                self._set_plugin_ui(YELLOW, "Chrome 运行中，等待插件连接…")
             else:
                 # Chrome 没开，插件根本连不上 → 不能用 → 红
-                self._set_plugin_ui(RED, "● Chrome 未运行，插件无法连接（不能用）")
+                self._set_plugin_ui(RED, "Chrome 未运行，插件无法连接（不能用）")
 
+        if self._closing:
+            return
         import threading as _th
         _th.Thread(target=_do_check, daemon=True).start()
 
     def _set_plugin_ui(self, color: str, text: str, bold: bool = False):
-        """线程安全：通过信号把结果切回主线程更新（不能在子线程里直接碰 UI/定时器）。"""
-        self.plugin_status_sig.emit(color, text, bool(bold))
+        """线程安全：通过信号把结果切回主线程更新（不能在子线程里直接碰 UI/定时器）。
+        _closing 关闭了大部分竞态窗口；外层 try/except 是最后一道保险——
+        万一检测线程正好卡在"判断完 _closing、还没来得及 emit"这一瞬间被关闭，
+        C/C++ 侧对象已经没了，emit 会抛 RuntimeError，这里兜住，不让它冒到线程外面。"""
+        if self._closing:
+            return
+        try:
+            self.plugin_status_sig.emit(color, text, bool(bold))
+        except RuntimeError:
+            pass
 
     def _apply_plugin_ui(self, color: str, text: str, bold: bool):
         """在主线程真正更新状态灯与提示文字（由 plugin_status_sig 触发）。"""
-        # 状态发生变化时往「问题记录」追加一条（仅变化时，避免刷屏）
-        if getattr(self, "_last_plugin_text", None) != text:
-            self._last_plugin_text = text
-            self._log_problem(f"🔌 {text}")
+        self._last_plugin_text = text
         self.lbl_plugin_dot.setStyleSheet(f"color: {color}; font-size: 14px;")
         self.lbl_nm_status.setText(text)
         weight = "bold" if bold else "normal"
@@ -774,15 +1059,15 @@ class PageFastSave(QWidget):
                 pass
 
     def _log_problem(self, msg: str):
-        """把诊断/连接/错误类信息写到下方「问题记录」栏。"""
+        """不再单独维护「问题记录」列表，诊断/连接/错误类信息直接显示在
+        速存启用卡片里绿点右侧的状态提示文字上。"""
         try:
-            self.problem_widget.addItem(msg)
-            self.problem_widget.scrollToBottom()
+            self.lbl_nm_status.setText(msg)
         except Exception:
             pass
 
     def _diagnose(self):
-        """把当前关键状态打到「问题记录」栏，方便排查“为什么没存/没反应”。"""
+        """把当前关键状态整理成一条多行文字，显示在插件状态提示上，方便排查“为什么没存/没反应”。"""
         staging = self._get_plugin_save_dir()
         target = self.save_path.text().strip()
         try:
@@ -798,14 +1083,17 @@ class PageFastSave(QWidget):
         conn = "已连接" if _ws_connected() else "未连接（浏览器扩展没连上或程序刚启动）"
         port = ("监听正常" if _ws_server_ok is True
                 else "端口被占用" if _ws_server_ok is False else "启动中")
-        self._log_problem("🔧 诊断：")
-        self._log_problem(f"   • 本地端口 {_WS_PORT}：{port}")
-        self._log_problem(f"   • 插件连接：{conn}")
-        self._log_problem(f"   • 浏览器暂存目录：{staging}（当前 {n_img} 张图）")
-        self._log_problem(f"   • 归档保存路径：{target or '（未设置）'}")
+        lines = [
+            "🔧 诊断：",
+            f"• 本地端口 {_WS_PORT}：{port}",
+            f"• 插件连接：{conn}",
+            f"• 浏览器暂存目录：{staging}（当前 {n_img} 张图）",
+            f"• 归档保存路径：{target or '（未设置）'}",
+        ]
         if same_dir:
-            self._log_problem("   • ⚠ 两者相同：图片会直接留在此目录、不再搬运（正常，只是不移动）")
-        self._log_problem(f"   • 启用状态：{'开' if self.chk_imgonly.isChecked() else '关'}")
+            lines.append("• ⚠ 两者相同：图片会直接留在此目录、不再搬运（正常，只是不移动）")
+        lines.append(f"• 启用状态：{'开' if self.chk_imgonly.isChecked() else '关'}")
+        self._log_problem("\n".join(lines))
 
     # ────────────────────────────────────────
     # 速存文本
@@ -881,23 +1169,20 @@ class PageFastSave(QWidget):
                 self.list_widget.addItem("⚠️ 无法获取前台窗口，请先点击资源管理器再按快捷键")
                 return
 
-            shell    = win32com.client.Dispatch("Shell.Application")
-            active_window = None
-            for window in shell.Windows():
-                try:
-                    if int(window.HWND) == fg_hwnd:
-                        active_window = window
-                        break
-                except Exception:
-                    continue
+            doc, n_tabs = self._resolve_active_view(fg_hwnd, prefer_selected=True)
 
-            if active_window is None:
+            if doc is None and n_tabs == 0:
                 self.list_widget.addItem("⚠️ 前台窗口不是资源管理器，请先切换到资源管理器再按快捷键")
+                return
+            if doc is None:
+                self.list_widget.addItem(
+                    f"⚠️ 未选中任何文件，请先选中一个文件再按快捷键（检测到 {n_tabs} 个标签）"
+                )
                 return
 
             # ── 第二步：获取选中项，限制为"恰好 1 个文件" ────────────
             try:
-                sel = active_window.Document.SelectedItems()
+                sel = doc.SelectedItems()
                 count = sel.Count
             except Exception:
                 self.list_widget.addItem("❌ 无法读取选中项")
@@ -1018,7 +1303,7 @@ class PageFastSave(QWidget):
             self.save_path.setStyleSheet("")
             if norm != path: self.save_path.setText(norm)
             return True
-        self.save_path.setStyleSheet("border: 1px solid #e05;")
+        self.save_path.setStyleSheet(f"border: 1px solid {tk('err')};")
         if not interactive:
             return False
         if path: self.list_widget.addItem(f"⚠️ 路径不可用：{path}（{err}）")
@@ -1067,22 +1352,68 @@ class PageFastSave(QWidget):
     @staticmethod
     def _next_folder_name(name: str) -> str:
         """
-        推算下一个文件夹名：
-          纯数字              511  → 512  （保持同位数，不进位补零）
-          字母+数字后缀       H04  → H05  （保持数字段位数）
-          汉字/文字+数字后缀  记录8 → 记录9
-          无数字后缀          服装  → 服装002
+        推算下一个文件夹名：自动定位名称中的数字段并加 1，保留其余文字与位数。
+          纯数字            511      → 512
+          数字在结尾        H04      → H05 ；记录8 → 记录9
+          数字在开头        5单元    → 6单元
+          数字在中间        第2章    → 第3章
+          含多段数字        2024第1季 → 2024第2季（默认对最后一段数字加 1）
+          完全不含数字      服装     → 服装002
+        位数处理：进位不足则补零保持原宽度（04→05）；超出原宽度则不截断（99→100，第9章→第10章）。
         """
-        m = re.search(r'^(.*?)(\d+)$', name)
-        if not m:
-            # 无数字结尾：追加 002
+        matches = list(re.finditer(r'\d+', name))
+        if not matches:
+            # 完全没有数字：追加 002 作为起始序号
             return name + "002"
-        prefix, num_str = m.group(1), m.group(2)
-        next_num = int(num_str) + 1
-        # 保持原位数（如 04→05，04→10 时不截断）
-        width = len(num_str)
-        next_str = str(next_num).zfill(width) if len(str(next_num)) <= width else str(next_num)
-        return prefix + next_str
+        m = matches[-1]                       # 默认对最后一段数字加 1
+        num_str = m.group(0)
+        next_str = str(int(num_str) + 1).zfill(len(num_str))  # zfill 只补零、超宽不截断
+        return name[:m.start()] + next_str + name[m.end():]
+
+    @staticmethod
+    def _next_available_folder_name(parent_dir: str, name: str) -> str:
+        """
+        目录感知的顺序新建：不是简单对选中名 +1，而是扫描同级目录里所有
+        「同前缀 + 数字段 + 同后缀」的文件夹，取其中最大编号再 +1，从而自动跳过
+        已存在的编号，一次建到位。
+          选中 09，目录已有 10、11            → 12
+          选中 H16B，目录已有 H15B/H16B/H17B → H18B
+        位宽沿用选中名数字段的宽度（zfill 补零、超宽不截断）；若结果仍意外存在则
+        继续 +1 直到空位。名称完全不含数字时，退回 name + 三位序号 起始。
+        """
+        matches = list(re.finditer(r'\d+', name))
+        if not matches:
+            # 无数字：从 name002 起向后找第一个空位
+            n, width = 2, 3
+            while True:
+                cand = f"{name}{str(n).zfill(width)}"
+                if not os.path.exists(os.path.join(parent_dir, cand)):
+                    return cand
+                n += 1
+
+        m = matches[-1]                       # 定位最后一段数字
+        prefix, suffix = name[:m.start()], name[m.end():]
+        width  = len(m.group(0))
+        max_num = int(m.group(0))             # 起点至少是选中名本身的编号
+
+        # 扫描同级目录里「同前缀、同后缀」的文件夹，取最大编号
+        pat = re.compile(r'^' + re.escape(prefix) + r'(\d+)' + re.escape(suffix) + r'$')
+        try:
+            for entry in os.listdir(parent_dir):
+                if os.path.isdir(os.path.join(parent_dir, entry)):
+                    mm = pat.match(entry)
+                    if mm:
+                        max_num = max(max_num, int(mm.group(1)))
+        except OSError:
+            pass
+
+        # 从 max_num+1 起，找第一个不存在的编号
+        n = max_num + 1
+        while True:
+            cand = prefix + str(n).zfill(width) + suffix
+            if not os.path.exists(os.path.join(parent_dir, cand)):
+                return cand
+            n += 1
 
     def _current_mkdir_key(self) -> str:
         """当前顺序新建所选热键（F5-F8），默认 F8。"""
@@ -1126,19 +1457,35 @@ class PageFastSave(QWidget):
                 self.list_widget.addItem(f"❌ 注册 {seq_key} 热键失败，可能被其他程序占用")
                 return
 
-            # 同时注册 F9「直接新建」
+            # 注册 F9「直接新建 A」
             ok9 = ctypes.windll.user32.RegisterHotKey(
                 None, self._mkdir_direct_id, 0x0000, VK_CODE["F9"]
             )
-            if ok9:
-                if self._mkdir_direct_filter is None:
-                    self._mkdir_direct_filter = _GlobalHotkeyFilter(
-                        self.mkdir_direct_create, self._mkdir_direct_id
-                    )
-                    QCoreApplication.instance().installNativeEventFilter(self._mkdir_direct_filter)
-                self.list_widget.addItem(f"🟢 速建文件夹：已启用（{seq_key} 顺序新建 / F9 直接新建 就绪）")
+            if ok9 and self._mkdir_direct_filter is None:
+                self._mkdir_direct_filter = _GlobalHotkeyFilter(
+                    self.mkdir_direct_create_a, self._mkdir_direct_id
+                )
+                QCoreApplication.instance().installNativeEventFilter(self._mkdir_direct_filter)
+
+            # 注册 F10「直接新建 B」
+            ok10 = ctypes.windll.user32.RegisterHotKey(
+                None, self._mkdir_direct_b_id, 0x0000, VK_CODE["F10"]
+            )
+            if ok10 and self._mkdir_direct_b_filter is None:
+                self._mkdir_direct_b_filter = _GlobalHotkeyFilter(
+                    self.mkdir_direct_create_b, self._mkdir_direct_b_id
+                )
+                QCoreApplication.instance().installNativeEventFilter(self._mkdir_direct_b_filter)
+
+            if ok9 and ok10:
+                self.list_widget.addItem(
+                    f"🟢 速建文件夹：已启用（{seq_key} 顺序新建 / F9 · F10 直接新建 就绪）"
+                )
             else:
-                self.list_widget.addItem(f"🟢 速建文件夹：{seq_key} 已启用；⚠️ F9 注册失败（可能被占用）")
+                failed = " ".join(k for k, ok in (("F9", ok9), ("F10", ok10)) if not ok)
+                self.list_widget.addItem(
+                    f"🟢 速建文件夹：{seq_key} 已启用；⚠️ {failed} 注册失败（可能被占用）"
+                )
         else:
             self._unregister_mkdir_hotkey()
             self.list_widget.addItem("⏹️ 速建文件夹：已关闭")
@@ -1151,8 +1498,171 @@ class PageFastSave(QWidget):
         try:
             ctypes.windll.user32.UnregisterHotKey(None, self._mkdir_hotkey_id)
             ctypes.windll.user32.UnregisterHotKey(None, self._mkdir_direct_id)
+            ctypes.windll.user32.UnregisterHotKey(None, self._mkdir_direct_b_id)
         finally:
             self._mkdir_hotkey_registered = False
+
+    # ────────────────────────────────────────
+    # 资源管理器（含 Win10/11 多标签）活动视图解析
+    # ────────────────────────────────────────
+
+    @staticmethod
+    def _view_path(doc) -> str:
+        """取某个文件夹视图当前所在目录，失败返回空串。
+
+        注意：不能用 callable() 来区分「属性」和「方法」——
+        pywin32 的 COM 对象实现了 __call__（默认属性），callable() 恒为真，
+        误判会导致把属性当方法调用而取不到路径。这里改为直接按顺序试。
+        """
+        # 路径 1：pywin32（ShellFolderView）——属性式访问
+        try:
+            p = doc.Folder.Self.Path
+            if p:
+                return p
+        except Exception:
+            pass
+        # 路径 2：comtypes dynamic 包装——方法式访问
+        try:
+            p = doc.Folder().Self().Path
+            if p:
+                return p
+        except Exception:
+            pass
+        return ""
+
+    @staticmethod
+    def _children_by_zorder(hwnd):
+        """按 z-order（从最顶层开始）列出 hwnd 的直接子窗口。"""
+        import win32gui
+        import win32con
+        res = []
+        try:
+            h = win32gui.GetWindow(hwnd, win32con.GW_CHILD)   # z-order 最顶的子窗口
+            guard = 0
+            while h and guard < 256:
+                res.append(h)
+                h = win32gui.GetWindow(h, win32con.GW_HWNDNEXT)
+                guard += 1
+        except Exception:
+            pass
+        return res
+
+    def _active_tab_hwnd(self, fg_hwnd):
+        """取「当前活动标签」的控件窗口句柄（Win11 标签式资源管理器）。
+
+        依据：每个标签都有自己的 ShellTabWindowClass 控件窗口，
+        而【活动标签的控件窗口始终位于 z-order 最顶端】。
+        注意：不能用「窗口是否可见」来判断 —— 对 Win11 资源管理器无效，
+        非活动标签的窗口同样报告为可见（这正是之前几版失败的原因）。
+
+        无标签（Win10 原生）时返回 0，调用方直接用主窗口即可。
+        """
+        import win32gui
+        for h in self._children_by_zorder(fg_hwnd):
+            try:
+                if win32gui.GetClassName(h) == "ShellTabWindowClass":
+                    return h          # 第一个即 z-order 最顶 = 活动标签
+            except Exception:
+                continue
+        return 0
+
+    def _tab_hwnd_of_window(self, w):
+        """取某个 Shell 窗口对象（IWebBrowser2）所属【标签】的控件窗口句柄。
+
+        关键：w.HWND 返回的是主窗口句柄（多标签下三个候选全一样，无法区分）；
+        而 IShellBrowser::GetWindow() 返回的才是该标签自己的 ShellTabWindowClass 句柄。
+        pywin32 原生支持 IServiceProvider::QueryService，可直接取到 IShellBrowser。
+        """
+        import pythoncom
+        try:
+            from win32com.shell import shell as _shell
+            iid_sb = _shell.IID_IShellBrowser
+        except Exception:
+            iid_sb = pythoncom.MakeIID("{000214E2-0000-0000-C000-000000000046}")
+        try:
+            sp = w._oleobj_.QueryInterface(pythoncom.IID_IServiceProvider)
+            sb = sp.QueryService(iid_sb, iid_sb)
+            return int(sb.GetWindow())
+        except Exception as e:
+            self._sb_err = f"{e}"
+            return 0
+
+    def _resolve_active_view(self, fg_hwnd, prefer_selected: bool = False):
+        """解析前台资源管理器「当前活动标签」的文件夹视图。
+
+        返回 (doc, n_tabs)：
+          doc 非 None            → 拿到活动视图，可用 .SelectedItems() / .Folder.Self.Path
+          doc 为 None 且 n_tabs==0 → 前台窗口不是资源管理器
+          doc 为 None 且 n_tabs>0  → 是资源管理器，但多标签下无法确定活动标签
+        """
+        import win32gui
+        import win32com.client
+
+        self._sb_err = ""
+        shell = win32com.client.Dispatch("Shell.Application")
+        candidates = []
+        for w in shell.Windows():
+            try:
+                if int(w.HWND) == fg_hwnd:
+                    candidates.append(w)
+            except Exception:
+                continue
+
+        if not candidates:
+            return None, 0
+        if len(candidates) == 1:
+            try:
+                return candidates[0].Document, 1
+            except Exception:
+                return None, 1
+
+        # ── 1. 主路径：z-order 最顶的 ShellTabWindowClass = 活动标签，
+        #        再用 IShellBrowser::GetWindow() 找出属于它的那个 Shell 窗口对象 ──
+        active_tab = self._active_tab_hwnd(fg_hwnd)
+        self._last_tab_diag = f"活动标签 hwnd={active_tab}，候选 {len(candidates)} 个"
+        if active_tab:
+            seen = []
+            for w in candidates:
+                tab = self._tab_hwnd_of_window(w)
+                seen.append(tab)
+                if tab and tab == active_tab:
+                    try:
+                        return w.Document, len(candidates)
+                    except Exception:
+                        pass
+            self._last_tab_diag += f"，各标签 hwnd={seen}"
+            if self._sb_err:
+                self._last_tab_diag += f"，IShellBrowser 错误({self._sb_err})"
+
+        # ── 2. 回退：窗口标题与各标签目录比对 ──
+        try:
+            title = (win32gui.GetWindowText(fg_hwnd) or "").strip()
+        except Exception:
+            title = ""
+        if title:
+            def _leaf(s: str) -> str:
+                return re.split(r'[\\/]', s.rstrip("\\/"))[-1].lower()
+            t_full, t_leaf = title.rstrip("\\/").lower(), _leaf(title)
+            for w in candidates:
+                try:
+                    doc_w = w.Document
+                except Exception:
+                    continue
+                p = self._view_path(doc_w)
+                if p and (p.rstrip("\\/").lower() == t_full or _leaf(p) == t_leaf):
+                    return doc_w, len(candidates)
+
+        # ── 3. 回退：选用「确实有选中项」的标签（仅需要选中项的功能可用）──
+        if prefer_selected:
+            for w in candidates:
+                try:
+                    doc_w = w.Document
+                    if doc_w.SelectedItems().Count > 0:
+                        return doc_w, len(candidates)
+                except Exception:
+                    continue
+
+        return None, len(candidates)
 
     def mkdir_fast_create(self):
         """顺序新建热键触发：在当前资源管理器选中文件夹旁边新建下一个编号文件夹。"""
@@ -1171,29 +1681,29 @@ class PageFastSave(QWidget):
                 self.list_widget.addItem("⚠️ 无法获取前台窗口，请先点击资源管理器")
                 return
 
-            shell = win32com.client.Dispatch("Shell.Application")
-            active_window = None
-            for window in shell.Windows():
-                try:
-                    if int(window.HWND) == fg_hwnd:
-                        active_window = window
-                        break
-                except Exception:
-                    continue
+            doc, n_tabs = self._resolve_active_view(fg_hwnd, prefer_selected=True)
 
-            if active_window is None:
+            if doc is None and n_tabs == 0:
                 self.list_widget.addItem("⚠️ 前台窗口不是资源管理器")
+                return
+            if doc is None:
+                self.list_widget.addItem(
+                    f"⚠️ 未选中任何文件夹，请先选中一个文件夹再按 {self._current_mkdir_key()}"
+                    f"（检测到 {n_tabs} 个标签）"
+                )
                 return
 
             try:
-                sel = active_window.Document.SelectedItems()
+                sel = doc.SelectedItems()
                 count = sel.Count
             except Exception:
                 self.list_widget.addItem("❌ 无法读取选中项")
                 return
 
             if count == 0:
-                self.list_widget.addItem(f"⚠️ 未选中任何文件夹，请先选中一个文件夹再按 {self._current_mkdir_key()}")
+                self.list_widget.addItem(
+                    f"⚠️ 未选中任何文件夹，请先选中一个文件夹再按 {self._current_mkdir_key()}"
+                )
                 return
             if count > 1:
                 self.list_widget.addItem(f"⚠️ 选中了 {count} 个项目，每次只能对 1 个文件夹操作")
@@ -1208,12 +1718,9 @@ class PageFastSave(QWidget):
 
             parent_dir  = os.path.dirname(target_path)
             folder_name = os.path.basename(target_path)
-            new_name    = self._next_folder_name(folder_name)
+            # 目录感知：扫描同级同模式文件夹取最大编号 +1，跳过已存在的编号
+            new_name    = self._next_available_folder_name(parent_dir, folder_name)
             new_path    = os.path.join(parent_dir, new_name)
-
-            if os.path.exists(new_path):
-                self.list_widget.addItem(f"⚠️ 目标已存在，跳过：{new_name}")
-                return
 
             os.makedirs(new_path)
             self.list_widget.addItem(f"✅ 速建文件夹成功：{new_name}")
@@ -1222,17 +1729,28 @@ class PageFastSave(QWidget):
         except Exception as e:
             self.list_widget.addItem(f"❌ 速建文件夹错误：{e}")
 
-    def mkdir_direct_create(self):
-        """F9 触发：在当前资源管理器窗口内，仅当未选中任何项时，
-        新建一个以「直接新建」文本框内容命名的空文件夹（默认 Grok）。"""
+    def mkdir_direct_create_a(self):
+        """F9 触发：新建名称 A（默认 Grok）的文件夹。"""
+        self._mkdir_direct_create(self.mkdir_name, "Grok", "F9")
+
+    def mkdir_direct_create_b(self):
+        """F10 触发：新建名称 B（默认 Qwen）的文件夹。"""
+        self._mkdir_direct_create(self.mkdir_name_b, "Qwen", "F10")
+
+    def _mkdir_direct_create(self, name_edit, default_name: str, key_label: str):
+        """在当前资源管理器活动标签内，仅当未选中任何项时，
+        新建一个以 name_edit 内容命名的空文件夹。"""
         if not self.chk_mkdir.isChecked():
             self.list_widget.addItem("⚠️ 请先启用速建文件夹")
             return
         if not _WIN_OK:
             self.list_widget.addItem("❌ 功能不可用：缺少 pywin32")
             return
-        name = self.mkdir_name.text().strip() or "Grok"
-        name = re.sub(r'[\\/:*?"<>|]+', "_", name).strip() or "Grok"
+        name = name_edit.text().strip() or default_name
+        # 清洗非法字符；若清洗后只剩下划线/空白（如输入了 "///"），回退默认名
+        name = re.sub(r'[\\/:*?"<>|]+', "_", name).strip()
+        if not name.strip("_ "):
+            name = default_name
         try:
             import win32com.client
             import win32gui
@@ -1242,50 +1760,71 @@ class PageFastSave(QWidget):
                 self.list_widget.addItem("⚠️ 无法获取前台窗口，请先点击资源管理器")
                 return
 
-            shell = win32com.client.Dispatch("Shell.Application")
-            active_window = None
-            for window in shell.Windows():
-                try:
-                    if int(window.HWND) == fg_hwnd:
-                        active_window = window
-                        break
-                except Exception:
-                    continue
+            doc, n_tabs = self._resolve_active_view(fg_hwnd, prefer_selected=False)
 
-            if active_window is None:
+            if doc is None and n_tabs == 0:
                 self.list_widget.addItem("⚠️ 前台窗口不是资源管理器")
+                return
+            if doc is None:
+                # 认不出当前活动标签：宁可不建，也不要建到错误的目录里
+                diag = getattr(self, "_last_tab_diag", "无诊断")
+                self.list_widget.addItem(f"⚠️ 无法确定当前标签，已取消新建")
+                self.list_widget.addItem(f"🔍 诊断：{diag}；Shell.Windows 候选 {n_tabs} 个")
+                self.list_widget.scrollToBottom()
+                self._log_problem(f"🔍 {key_label} 定位失败：{diag}；候选 {n_tabs} 个")
                 return
 
             # 仅在“未选中任何项”时才直接新建
             try:
-                count = active_window.Document.SelectedItems().Count
+                count = doc.SelectedItems().Count
             except Exception:
                 count = 0
             if count > 0:
-                self.list_widget.addItem(f"ℹ️ 已选中 {count} 项，F9 直接新建仅在未选中任何项时生效")
+                self.list_widget.addItem(
+                    f"ℹ️ 已选中 {count} 项，{key_label} 直接新建仅在未选中任何项时生效"
+                )
                 return
 
-            # 取当前窗口所在目录
-            try:
-                cur_dir = active_window.Document.Folder.Self.Path
-            except Exception:
-                cur_dir = ""
+            # 取当前活动标签所在目录
+            cur_dir = self._view_path(doc)
             if not cur_dir or not os.path.isdir(cur_dir):
-                self.list_widget.addItem("⚠️ 无法确定当前文件夹（可能在“此电脑”等特殊位置）")
+                self.list_widget.addItem(
+                    f"⚠️ 无法确定当前文件夹｜取到的路径={cur_dir!r}｜doc={type(doc).__name__}"
+                )
+                self.list_widget.scrollToBottom()
                 return
 
             new_path = self._unique_path(os.path.join(cur_dir, name))
             os.makedirs(new_path)
-            self.list_widget.addItem(f"✅ 直接新建成功：{os.path.basename(new_path)}")
+            self.list_widget.addItem(f"✅ 直接新建成功：{new_path}")
             self.list_widget.scrollToBottom()
 
         except Exception as e:
             self.list_widget.addItem(f"❌ 直接新建错误：{e}")
 
     def closeEvent(self, e):
+        self.stop_background_checks()
         self._unregister_txt_hotkey()
         self._unregister_mkdir_hotkey()
         super().closeEvent(e)
+
+    def stop_background_checks(self):
+        """主窗口真正关闭时调用（见 ui_main.py MainWindow.closeEvent）。
+        本页面是嵌在 QStackedWidget 里的子页面，Qt 不会对它单独触发 closeEvent，
+        所以之前那个 closeEvent 里的清理其实从没被执行过——这才是报错的根本原因。
+        这里先置位 _closing 挡住新的检测线程，再停掉定时器；已经在跑的检测线程
+        自己也会在 _do_check / _set_plugin_ui 里检查这个标志位，安全退出。"""
+        if self._closing:
+            return
+        self._closing = True
+        try:
+            self._nm_check_timer.stop()
+        except Exception:
+            pass
+        try:
+            self._imgonly_timer.stop()
+        except Exception:
+            pass
 
     def _bind_container_switch(self):
         w = self.parent()

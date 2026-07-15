@@ -1,4 +1,24 @@
-from styles.common_styles import TEXT_STYLE, BUTTON_STYLE, LINEEDIT_STYLE
+from styles.style_all import (
+    TEXT_STYLE,
+    BUTTON_STYLE,
+    LINEEDIT_STYLE,
+    install_card_title,
+    make_card,
+    apply_folder_path_edit,
+    restyle_folder_path_edit,
+    theme,
+    tk,
+    CARD_LEFT_GAP,
+    CARD_TOP_GAP,
+    CARD_RIGHT_GAP,
+    CARD_BOTTOM_GAP,
+)
+
+# TEXT_STYLE 本身是空字符串（见 style_common.py），setStyleSheet(TEXT_STYLE) 等价于
+# setStyleSheet("")，文字颜色/透明背景全靠祖先 QGroupBox[titleVariant="accent"] 的级联
+# 规则兜底。为避免"心存侥幸"（见标准 3.3/3.9），这里显式追加 background: transparent，
+# 页面内所有原来 setStyleSheet(TEXT_STYLE) 的地方统一换成 TEXT_STYLE_T。
+TEXT_STYLE_T = TEXT_STYLE + "background: transparent;"
 
 import os
 import subprocess
@@ -61,18 +81,30 @@ class PageDirLink(QWidget):
         link_h.setContentsMargins(0, 0, 0, 0)
         link_h.setSpacing(10)
 
-        # ── 左侧：新建映射 ──
-        gb = QGroupBox("新建映射")
-        gb.setProperty("titleVariant", "accent")
+        # ── 左侧：新建映射（功能区标准卡） ──
+        gb = make_card("CardDirLinkCreate")
         vb = QVBoxLayout(gb)
-        vb.setSpacing(6)
+        vb.setSpacing(0)  # 标题间距走全局 CARD_TITLE_BODY_GAP
+        vb.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        install_card_title(gb, vb, "新建映射")
+
+        body_create = QWidget()
+        # 必须带 #id 选择器：无选择器的 border:none 会级联到子 QLineEdit，冲掉路径框外框
+        body_create.setObjectName("DirLinkCreateBody")
+        body_create.setStyleSheet(
+            "#DirLinkCreateBody{background:transparent;border:none;}"
+        )
+        vb_body = QVBoxLayout(body_create)
+        vb_body.setContentsMargins(0, 0, 0, 0)
+        vb_body.setSpacing(6)
+        vb.addWidget(body_create, 1)
 
         # 行1：源目录（mklink 的 target，即真实目录）
         r1 = QHBoxLayout()
         lbl_src = QLabel("源目录（真实路径）：")
-        lbl_src.setStyleSheet(TEXT_STYLE)
+        lbl_src.setStyleSheet(TEXT_STYLE_T)
         self.src_path = QLineEdit()
-        self.src_path.setStyleSheet(LINEEDIT_STYLE)
+        self._src_path_icon_action = apply_folder_path_edit(self.src_path)
         self.src_path.setPlaceholderText("D:\\实际存放内容的文件夹")
         self.src_path.textChanged.connect(self._update_preview)
         btn_src = QPushButton("浏览")
@@ -81,14 +113,14 @@ class PageDirLink(QWidget):
         r1.addWidget(lbl_src)
         r1.addWidget(self.src_path)
         r1.addWidget(btn_src)
-        vb.addLayout(r1)
+        vb_body.addLayout(r1)
 
         # 行2：链接位置（mklink 的 link，即软链接路径）
         r2 = QHBoxLayout()
         lbl_dst = QLabel("链接位置（新路径）：")
-        lbl_dst.setStyleSheet(TEXT_STYLE)
+        lbl_dst.setStyleSheet(TEXT_STYLE_T)
         self.dst_path = QLineEdit()
-        self.dst_path.setStyleSheet(LINEEDIT_STYLE)
+        self._dst_path_icon_action = apply_folder_path_edit(self.dst_path)
         self.dst_path.setPlaceholderText("C:\\Users\\...\\想要访问的路径名称")
         self.dst_path.textChanged.connect(self._update_preview)
         btn_dst = QPushButton("浏览")
@@ -97,24 +129,24 @@ class PageDirLink(QWidget):
         r2.addWidget(lbl_dst)
         r2.addWidget(self.dst_path)
         r2.addWidget(btn_dst)
-        vb.addLayout(r2)
+        vb_body.addLayout(r2)
 
         # 行3：命令预览（只读）
         r3 = QHBoxLayout()
         lbl_cmd = QLabel("将执行：")
-        lbl_cmd.setStyleSheet(TEXT_STYLE)
+        lbl_cmd.setStyleSheet(TEXT_STYLE_T)
         self.cmd_preview = QLineEdit()
         self.cmd_preview.setStyleSheet(LINEEDIT_STYLE)
         self.cmd_preview.setReadOnly(True)
         self.cmd_preview.setPlaceholderText("填写路径后自动显示命令")
         r3.addWidget(lbl_cmd)
         r3.addWidget(self.cmd_preview, 1)
-        vb.addLayout(r3)
+        vb_body.addLayout(r3)
 
         # 行4：选项 + 执行按钮
         r4 = QHBoxLayout()
         self.cb_admin = QCheckBox("以管理员权限执行（推荐）")
-        self.cb_admin.setStyleSheet(TEXT_STYLE)
+        self.cb_admin.setStyleSheet(TEXT_STYLE_T)
         self.cb_admin.setChecked(True)
         r4.addWidget(self.cb_admin)
         r4.addStretch()
@@ -122,19 +154,21 @@ class PageDirLink(QWidget):
         self.btn_run.setStyleSheet(BUTTON_STYLE)
         self.btn_run.clicked.connect(self._create_link)
         r4.addWidget(self.btn_run)
-        vb.addLayout(r4)
+        vb_body.addLayout(r4)
 
         link_h.addWidget(gb, 1)
 
-        # ── 右侧：映射记录 ──
-        log_gb = QGroupBox("映射记录")
-        log_gb.setProperty("titleVariant", "accent")
+        # ── 右侧：映射记录（功能区标准卡） ──
+        log_gb = make_card("CardDirLinkLog")
         log_gb.setFixedWidth(360)
         log_lay = QVBoxLayout(log_gb)
-        log_lay.setContentsMargins(8, 8, 8, 8)
+        log_lay.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        log_lay.setSpacing(0)
+        install_card_title(log_gb, log_lay, "映射记录")
 
         self.list = QListWidget()
-        self.list.setStyleSheet("QListWidget{color:#9fb0d7;}")
+        self.list.setStyleSheet(f"QListWidget{{color:{tk('text_mut')};}}")
+        theme.changed.connect(self.refresh_theme)
         self.list.setAttribute(Qt.WA_StyledBackground, True)
         self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -150,11 +184,11 @@ class PageDirLink(QWidget):
         # ===================================================================
         # 下方区域：硬盘空间分析工具（左右分栏后空间更大）
         # ===================================================================
-        disk_gb = QGroupBox("硬盘空间分析")
-        disk_gb.setProperty("titleVariant", "accent")
+        disk_gb = make_card("CardDirLinkDisk")
         disk_gb_lay = QVBoxLayout(disk_gb)
-        disk_gb_lay.setContentsMargins(8, 8, 8, 8)
+        disk_gb_lay.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
         disk_gb_lay.setSpacing(0)
+        install_card_title(disk_gb, disk_gb_lay, "硬盘空间分析")
 
         self.disk_analyzer = DiskAnalyzerWidget()
         disk_gb_lay.addWidget(self.disk_analyzer)
@@ -166,6 +200,14 @@ class PageDirLink(QWidget):
         outer.addWidget(disk_gb, 78)
 
     # ── 路径浏览 ────────────────────────────────────────────────────
+
+
+    def refresh_theme(self, *_):
+        self.list.setStyleSheet(f"QListWidget{{color:{tk('text_mut')};}}")
+        if hasattr(self, "src_path"):
+            restyle_folder_path_edit(self.src_path, getattr(self, "_src_path_icon_action", None))
+        if hasattr(self, "dst_path"):
+            restyle_folder_path_edit(self.dst_path, getattr(self, "_dst_path_icon_action", None))
 
     def _choose_src(self):
         d = QFileDialog.getExistingDirectory(self, "选择源目录（真实文件夹）")

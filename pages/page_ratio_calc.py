@@ -4,6 +4,17 @@ from PyQt5.QtWidgets import (
     QFrame, QButtonGroup, QGroupBox, QScrollArea
 )
 from PyQt5.QtCore import Qt, QTimer
+from styles.style_all import (
+    install_card_title,
+    restyle_card_title,
+    make_card,
+    CARD_TOP_GAP,
+    CARD_LEFT_GAP,
+    CARD_RIGHT_GAP,
+    CARD_BOTTOM_GAP,
+    theme,
+)
+from utils.flow_layout import FlowLayout
 import ast
 
 
@@ -15,10 +26,15 @@ class PageRatioCalc(QWidget):
             w.setProperty("typo", name)
             w.style().unpolish(w); w.style().polish(w)
 
-        # 外层滚动区，内容较多时可垂直滚动
+        # 卡片标题：内联样式渲染，主题切换需要手动重刷（见 style_common.restyle_card_title）
+        self._theme_titles = []
+
+        # 外层滚动区，内容较多时可垂直滚动；横向滚动条强制关闭——
+        # 窗口变窄时靠内部各处的 FlowLayout 自动换行，不允许左右拖动。
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(scroll)
@@ -27,8 +43,9 @@ class PageRatioCalc(QWidget):
         scroll.setWidget(container)
 
         # 顶层：左（比例 + 大小写 + 大写汉字）· 右（计算器 + 汇率）
+        # 与系统总览一致：ContentRoot 已有左右内边距，页面不再叠第二层
         root = QHBoxLayout(container)
-        root.setContentsMargins(12, 0, 12, 12)
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(12)
         root.setAlignment(Qt.AlignTop)
 
@@ -38,15 +55,15 @@ class PageRatioCalc(QWidget):
         left.setSpacing(10)
         root.addLayout(left, 2)
 
-        # 全局状态条
+        # 内部状态文案（用于各操作提示，如"计算完成"/"已复制"），不再显示绿灯+文字条
         self.status = QLabel("🟢 就绪")
         _typo(self.status, "body")
-        left.addWidget(self.status, 0, Qt.AlignLeft)
 
-        # ── 比例计算器 ──────────────────────
-        gb_ratio = QGroupBox("比例计算器")
-        gb_ratio.setProperty("titleVariant", "accent")
+        # ── 比例计算器（功能区标准卡） ──────────────────────
+        gb_ratio = make_card("CardRatioCalc")
         ratio_box = QVBoxLayout(gb_ratio)
+        ratio_box.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        self._theme_titles.append(install_card_title(gb_ratio, ratio_box, "比例计算器"))
         left.addWidget(gb_ratio)
 
         self.a, self.b, self.c, self.d = QLineEdit(), QLineEdit(), QLineEdit(), QLineEdit()
@@ -69,6 +86,12 @@ class PageRatioCalc(QWidget):
         labC = QLabel("C"); _typo(labC, "body")
         r1.addWidget(labA); r1.addWidget(self.a); r1.addStretch(1)
         r1.addWidget(labC); r1.addWidget(self.c)
+        btn_copy_c = QPushButton("复制")
+        btn_copy_c.setProperty("role", "nav")
+        btn_copy_c.style().unpolish(btn_copy_c); btn_copy_c.style().polish(btn_copy_c)
+        btn_copy_c.setToolTip("复制 C 值到剪贴板")
+        btn_copy_c.clicked.connect(self._copy_c)
+        r1.addWidget(btn_copy_c)
         ratio_box.addLayout(r1)
 
         r2 = QHBoxLayout()
@@ -76,29 +99,21 @@ class PageRatioCalc(QWidget):
         labD = QLabel("D"); _typo(labD, "body")
         r2.addWidget(labB); r2.addWidget(self.b); r2.addStretch(1)
         r2.addWidget(labD); r2.addWidget(self.d)
-        ratio_box.addLayout(r2)
-
-        r3 = QHBoxLayout()
-        lbl_swap = QLabel("A与B数值互换"); _typo(lbl_swap, "muted")
-        r3.addWidget(lbl_swap)
-        btn_swap = QPushButton("交换")
-        btn_swap.setProperty("role", "nav")
-        btn_swap.style().unpolish(btn_swap); btn_swap.style().polish(btn_swap)
-        btn_swap.clicked.connect(self._swap)
-        r3.addWidget(btn_swap); r3.addStretch(1)
-        lbl_prec = QLabel("将D值"); _typo(lbl_prec, "muted")
-        r3.addWidget(lbl_prec)
         btn_copy_d = QPushButton("复制")
         btn_copy_d.setProperty("role", "nav")
         btn_copy_d.style().unpolish(btn_copy_d); btn_copy_d.style().polish(btn_copy_d)
+        btn_copy_d.setToolTip("复制 D 值到剪贴板")
         btn_copy_d.clicked.connect(self._copy_d)
-        r3.addWidget(btn_copy_d)
-        ratio_box.addLayout(r3)
+        r2.addWidget(btn_copy_d)
+        ratio_box.addLayout(r2)
 
-        sep1 = QFrame(); sep1.setFrameShape(QFrame.HLine)
+        sep1 = QFrame()
+        sep1.setFrameShape(QFrame.NoFrame)   # 4.15：QFrame 一旦吃到 QSS，原生 frameShape 画法会失效，改用实心矩形
+        sep1.setObjectName("RatioSep")
+        sep1.setFixedHeight(1)
         ratio_box.addWidget(sep1)
 
-        chips_row = QHBoxLayout(); chips_row.setSpacing(8)
+        chips_row = FlowLayout(h_spacing=8, v_spacing=8)
         ratio_box.addLayout(chips_row)
         presets = [
             ("1:1",   1,  1, 1536), ("16:9", 16,  9, 1536),
@@ -118,12 +133,19 @@ class PageRatioCalc(QWidget):
             b.clicked.connect(lambda _, a=ra, bb=rb, label=name, c=long_side:
                               self._apply_ratio(a, bb, label, c))
             self._chip_group.addButton(b); chips_row.addWidget(b)
-        chips_row.addStretch(1)
+        lbl_swap = QLabel("A与B数值互换"); _typo(lbl_swap, "muted")
+        chips_row.addWidget(lbl_swap)
+        btn_swap = QPushButton("交换")
+        btn_swap.setProperty("role", "nav")
+        btn_swap.style().unpolish(btn_swap); btn_swap.style().polish(btn_swap)
+        btn_swap.clicked.connect(self._swap)
+        chips_row.addWidget(btn_swap)
 
-        # ── 金额大小写转换 ──────────────────
-        gb_case = QGroupBox("金额大小写转换")
-        gb_case.setProperty("titleVariant", "accent")
+        # ── 金额大小写转换（功能区标准卡） ──────────────────
+        gb_case = make_card("CardRatioCase")
         case_box = QVBoxLayout(gb_case)
+        case_box.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        self._theme_titles.append(install_card_title(gb_case, case_box, "金额大小写转换"))
         left.addWidget(gb_case)
 
         row_in = QHBoxLayout()
@@ -153,10 +175,11 @@ class PageRatioCalc(QWidget):
         row_out.addWidget(lbl_big); row_out.addWidget(self.amount_output); row_out.addWidget(btn_copy_amt)
         case_box.addLayout(row_out)
 
-        # ── 大写汉字速查 ────────────────────
-        gb_chars = QGroupBox("人民币大写汉字速查")
-        gb_chars.setProperty("titleVariant", "accent")
+        # ── 大写汉字速查（功能区标准卡） ────────────────────
+        gb_chars = make_card("CardRatioChars")
         chars_box = QVBoxLayout(gb_chars)
+        chars_box.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        self._theme_titles.append(install_card_title(gb_chars, chars_box, "人民币大写汉字速查"))
         left.addWidget(gb_chars)
 
         hint = QLabel("点击单字即可复制到剪贴板"); _typo(hint, "muted")
@@ -168,17 +191,16 @@ class PageRatioCalc(QWidget):
         _typo(self._char_status, "muted")
 
         for row_chars in (CHARS_ROW1, CHARS_ROW2):
-            row_layout = QHBoxLayout(); row_layout.setSpacing(6); row_layout.setContentsMargins(0, 2, 0, 2)
+            row_layout = FlowLayout(h_spacing=6, v_spacing=6)
             chars_box.addLayout(row_layout)
             for ch in row_chars:
                 btn = QPushButton(ch)
-                btn.setFixedSize(42, 42)
+                btn.setFixedSize(46, 42)
                 btn.setObjectName("CharChip")
                 btn.setToolTip(f"复制「{ch}」")
                 btn.setStyleSheet("font-size:17px; font-weight:500;")
                 btn.clicked.connect(lambda _, c=ch: self._copy_char(c))
                 row_layout.addWidget(btn)
-            row_layout.addStretch(1)
         chars_box.addWidget(self._char_status)
 
         # ═══════════════ 右列 ═══════════════
@@ -187,10 +209,11 @@ class PageRatioCalc(QWidget):
         right.setAlignment(Qt.AlignTop)
         root.addLayout(right, 1)
 
-        # ── 简易计算器 ──────────────────────
-        gb_calc = QGroupBox("简易计算器")
-        gb_calc.setProperty("titleVariant", "accent")
+        # ── 简易计算器（功能区标准卡） ──────────────────────
+        gb_calc = make_card("CardRatioSimple")
         calc_box = QVBoxLayout(gb_calc)
+        calc_box.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        self._theme_titles.append(install_card_title(gb_calc, calc_box, "简易计算器"))
         right.addWidget(gb_calc)
 
         self.calc_expr = QLineEdit()
@@ -218,6 +241,14 @@ class PageRatioCalc(QWidget):
         # 右列底部留白（汇率转换器已迁移至「时区汇率」页）
         right.addStretch(1)
 
+        # 卡片标题是内联样式（install_card_title 按当前主题烤进颜色），
+        # 不吃全局 QSS 级联，主题切换需要手动重刷一遍（见标准文档 4.4）
+        theme.changed.connect(self._apply_theme)
+
+    def _apply_theme(self, *_args):
+        for lbl in self._theme_titles:
+            restyle_card_title(lbl)
+
     # ──────── 比例计算 ────────
     def _ratio_calc(self):
         try:
@@ -242,7 +273,17 @@ class PageRatioCalc(QWidget):
         from PyQt5.QtCore import QMimeData
         from PyQt5.QtWidgets import QApplication
         m = QMimeData(); m.setText(val); QApplication.clipboard().setMimeData(m)
-        self.status.setText("🟢 已复制整数部分到剪贴板")
+        self.status.setText("🟢 已复制D整数部分到剪贴板")
+
+    def _copy_c(self):
+        val = self.c.text().strip()
+        if not val:
+            self.status.setText("⚪ C 值为空，无法复制")
+            return
+        from PyQt5.QtCore import QMimeData
+        from PyQt5.QtWidgets import QApplication
+        m = QMimeData(); m.setText(val); QApplication.clipboard().setMimeData(m)
+        self.status.setText("🟢 已复制C值到剪贴板")
 
     def _apply_ratio(self, ra: int, rb: int, name: str, c: int = 0):
         self.a.blockSignals(True); self.b.blockSignals(True)

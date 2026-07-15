@@ -1,17 +1,24 @@
 # pages/page_timezone_fx.py
 # 「时区汇率」页面：
-#   左 70%：世界时钟——多城市中文模拟时钟，一排 3 只，可增删城市；
-#            模拟时间拆分为“日历选日期 + 时/分/秒上下按钮”，方便纯鼠标操作；含一键还原当前时间；
-#   右 30%：汇率转换器——由「比例计算」页迁移而来，功能与原来完全一致。
+#   无整页滚动；左右高度 100%、宽 70% / 30%
+#   左 70%：世界时钟——多城市中文模拟时钟，可增删；城市区右侧标准竖向滚动条
+#            模拟时间：日历选日期 + 时/分/秒上下按钮；含一键还原当前时间
+#   右 30%：汇率转换器——由「比例计算」页迁移而来
 
 import json, os
 from datetime import datetime, timedelta, timezone
 
-from PyQt5.QtCore import Qt, QTimer, QUrl, QRectF, QPointF, QDate, QTime
+from styles.style_all import (
+    theme, tk, install_card_title, make_card,
+    CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP,
+)
+from utils.flow_layout import FlowLayout
+
+from PyQt5.QtCore import Qt, QTimer, QUrl, QRectF, QPointF, QDate, QTime, QSize
 from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QFont
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QDateEdit, QGroupBox, QScrollArea, QFrame,
     QSizePolicy,
 )
@@ -79,27 +86,39 @@ class TimeSpinner(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
 
-        btn_qss = (
-            "QPushButton{background:#26324a; color:#dbe6ff; border:1px solid #33507f;"
-            "border-radius:4px; font-size:14px; font-weight:700; padding:0px;}"
-            "QPushButton:hover{background:#3a5a8a; color:#ffffff; border-color:#3a5a8a;}"
-        )
+        self._btns, self._vals, self._caps = [], [], []
         for key, cap, _mx in (("h", "时", 24), ("m", "分", 60), ("s", "秒", 60)):
             col = QVBoxLayout(); col.setSpacing(3); col.setAlignment(Qt.AlignHCenter)
             up = QPushButton("▲"); dn = QPushButton("▼")
             for b in (up, dn):
                 b.setFixedSize(46, 24)
                 b.setCursor(Qt.PointingHandCursor)
-                b.setStyleSheet(btn_qss)
+                self._btns.append(b)
             val = QLabel("00"); val.setAlignment(Qt.AlignCenter); val.setFixedSize(46, 28)
-            val.setStyleSheet("font-size:19px; font-weight:700; color:#e8eefc;")
             cap_lbl = QLabel(cap); cap_lbl.setAlignment(Qt.AlignCenter)
-            cap_lbl.setStyleSheet("font-size:11px; color:#8a97b5;")
+            self._vals.append(val); self._caps.append(cap_lbl)
             up.clicked.connect(lambda _=False, k=key, d=1: self._step(k, d))
             dn.clicked.connect(lambda _=False, k=key, d=-1: self._step(k, d))
             col.addWidget(up); col.addWidget(val); col.addWidget(dn); col.addWidget(cap_lbl)
             self._val[key] = val
             lay.addLayout(col)
+
+        self.refresh_theme()
+
+    def refresh_theme(self, *_):
+        btn_qss = (
+            f"QPushButton{{background:{tk('panel')}; color:{tk('text_strong')};"
+            f"border:1px solid {tk('border')};"
+            "border-radius:4px; font-size:14px; font-weight:700; padding:0px;}"
+            f"QPushButton:hover{{background:{tk('accent')}; color:#ffffff;"
+            f"border-color:{tk('accent')};}}"
+        )
+        for b in self._btns:
+            b.setStyleSheet(btn_qss)
+        for v in self._vals:
+            v.setStyleSheet(f"background:transparent; font-size:19px; font-weight:700; color:{tk('text')};")
+        for c in self._caps:
+            c.setStyleSheet(f"background:transparent; font-size:11px; color:{tk('text_mut')};")
 
     def _step(self, k, d):
         if k == "h": self._h = (self._h + d) % 24
@@ -202,6 +221,26 @@ class AnalogClock(QWidget):
         p.end()
 
 
+class _ClockGridHost(QWidget):
+    """世界时钟流式网格宿主：按宽度算总高度，供 QScrollArea 正确出竖向滚动。"""
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, w):
+        lay = self.layout()
+        if lay is not None and lay.hasHeightForWidth():
+            return lay.heightForWidth(w)
+        return super().heightForWidth(w)
+
+    def sizeHint(self):
+        w = max(self.width(), 320)
+        return QSize(w, self.heightForWidth(w))
+
+    def minimumSizeHint(self):
+        return QSize(0, 0)
+
+
 # ══════════════════════════ 单个城市块 ══════════════════════════
 class CityClock(QWidget):
     """一个城市：顶部旗帜+中文名胶囊 + 红叉关闭按钮、中间表盘、底部中文日期/时段。"""
@@ -220,19 +259,11 @@ class CityClock(QWidget):
         head = QHBoxLayout(); head.setSpacing(8)
         self.header = QLabel(f"{flag}  {city_name}")
         self.header.setAlignment(Qt.AlignCenter)
-        self.header.setStyleSheet(
-            "background:#26324a; color:#dbe6ff; border:1px solid #33507f;"
-            "border-radius:7px; padding:4px 12px; font-weight:600; font-size:14px;"
-        )
-        btn_del = QPushButton("✕")
+
+        btn_del = self.btn_del = QPushButton("✕")
         btn_del.setFixedSize(26, 26)
         btn_del.setCursor(Qt.PointingHandCursor)
         btn_del.setToolTip(f"删除 {city_name}")
-        btn_del.setStyleSheet(
-            "QPushButton{background:#2a3550; color:#ff5a6b; border:1px solid #45557a;"
-            "border-radius:5px; font-size:17px; font-weight:900; padding:0px;}"
-            "QPushButton:hover{background:#e11d48; color:#ffffff; border-color:#e11d48;}"
-        )
         btn_del.clicked.connect(lambda: self._on_remove and self._on_remove(self))
         head.addStretch(1); head.addWidget(self.header); head.addWidget(btn_del); head.addStretch(1)
         lay.addLayout(head)
@@ -244,8 +275,24 @@ class CityClock(QWidget):
         # 底部：中文日期 + 时段（前） + 时间（后）
         self.footer = QLabel("--")
         self.footer.setAlignment(Qt.AlignCenter)
-        self.footer.setStyleSheet("color:#9fb0d0; font-size:13px;")
         lay.addWidget(self.footer)
+
+        self.refresh_theme()
+
+    def refresh_theme(self, *_):
+        self.header.setStyleSheet(
+            f"background:{tk('panel')}; color:{tk('text_strong')}; border:1px solid {tk('border')};"
+            "border-radius:7px; padding:4px 12px; font-weight:600; font-size:14px;"
+        )
+        self.btn_del.setStyleSheet(
+            f"QPushButton{{background:{tk('panel')}; color:{tk('err')};"
+            f"border:1px solid {tk('border')};"
+            "border-radius:5px; font-size:17px; font-weight:900; padding:0px;}"
+            f"QPushButton:hover{{background:{tk('err')}; color:#ffffff;"
+            f"border-color:{tk('err')};}}"
+        )
+        self.footer.setStyleSheet(f"background:transparent; color:{tk('text_mut')}; font-size:13px;")
+        self.clock.update()          # 表盘是 QPainter 绘制，重绘即可
 
     def apply_utc(self, now_utc: datetime):
         local = now_utc.astimezone(self.tz)
@@ -267,8 +314,6 @@ class CityClock(QWidget):
 
 # ══════════════════════════ 页面主体 ══════════════════════════
 class PageTimezoneFx(QWidget):
-    COLS = 3  # 时钟网格列数（一排 3 只）
-
     def __init__(self):
         super().__init__()
 
@@ -282,27 +327,27 @@ class PageTimezoneFx(QWidget):
         self._cities = []          # list[CityClock]
         self._updating_edit = False
 
-        # 外层滚动
-        scroll = QScrollArea(self)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(scroll)
-
-        container = QWidget()
-        scroll.setWidget(container)
-
-        # 左右分栏：世界时钟 70% / 汇率转换器 30%
-        root = QHBoxLayout(container)
-        root.setContentsMargins(12, 0, 12, 12)
+        # 无整页滚动条：左右两区高度 100%，宽 70% / 30%
+        # 世界时钟卡片在区内用标准竖向滚动条上下浏览
+        # 与系统总览一致：ContentRoot 已有左右内边距，页面不再叠第二层
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(12)
-        root.setAlignment(Qt.AlignTop)
 
-        left_col = QVBoxLayout(); left_col.setAlignment(Qt.AlignTop)
-        right_col = QVBoxLayout(); right_col.setAlignment(Qt.AlignTop)
-        root.addLayout(left_col, 7)
-        root.addLayout(right_col, 3)
+        left_wrap = QWidget()
+        left_wrap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        left_col = QVBoxLayout(left_wrap)
+        left_col.setContentsMargins(0, 0, 0, 0)
+        left_col.setSpacing(0)
+
+        right_wrap = QWidget()
+        right_wrap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        right_col = QVBoxLayout(right_wrap)
+        right_col.setContentsMargins(0, 0, 0, 0)
+        right_col.setSpacing(0)
+
+        root.addWidget(left_wrap, 7)   # 世界时钟 70%
+        root.addWidget(right_wrap, 3)  # 汇率转换器 30%
 
         self._build_world_clock(left_col)
         self._build_fx(right_col)
@@ -326,27 +371,31 @@ class PageTimezoneFx(QWidget):
     # 竖向分隔线（用于分隔同一行内不同功能组）
     def _vsep(self):
         f = QFrame(); f.setFrameShape(QFrame.VLine)
-        f.setStyleSheet("QFrame{color:#33507f; background:#33507f; max-width:1px;}")
+        f.setObjectName("TzVSep")
+        f.setStyleSheet(f"QFrame{{color:{tk('border')}; background:{tk('border')}; max-width:1px;}}")
         f.setFixedHeight(30)
         return f
 
-    # ────────────────── 世界时钟区（左 70%） ──────────────────
+    # ────────────────── 世界时钟区（左 70%，高度占满） ──────────────────
     def _build_world_clock(self, col):
-        gb = QGroupBox("世界时钟")
-        gb.setProperty("titleVariant", "accent")
+        gb = make_card("CardTzWorldClock")
+        gb.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         box = QVBoxLayout(gb)
+        # spacing 与标题空隙由 install_card_title 按 CARD_TITLE_BODY_GAP 自动补偿
         box.setSpacing(10)
-        col.addWidget(gb)
+        box.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        install_card_title(gb, box, "世界时钟")
+        col.addWidget(gb, 1)  # 高度 100%
 
         # —— 第一行：基准城市 | 模拟时间(日期+时分秒) | 还原当前时间 ——
-        row1 = QHBoxLayout(); row1.setSpacing(6)
+        row1 = FlowLayout(h_spacing=8, v_spacing=8)
 
         lbl_base = QLabel("基准城市："); self._typo(lbl_base, "body")
         self.cb_base = QComboBox(); self.cb_base.setFixedHeight(32); self.cb_base.setMinimumWidth(120)
         self.cb_base.currentIndexChanged.connect(lambda _=None: self._sync_base_edit())
         row1.addWidget(lbl_base); row1.addWidget(self.cb_base)
 
-        row1.addSpacing(16); row1.addWidget(self._vsep()); row1.addSpacing(16)
+        row1.addWidget(self._vsep())
 
         lbl_sim = QLabel("模拟时间："); self._typo(lbl_sim, "body")
         self.date_edit = QDateEdit()
@@ -356,10 +405,10 @@ class PageTimezoneFx(QWidget):
         self.date_edit.setToolTip("点击右侧箭头弹出日历选择日期")
         self.date_edit.dateChanged.connect(lambda _=None: self._on_datetime_edited())
         self.time_spin = TimeSpinner()                        # 时/分/秒上下按钮（参考图3）
+        theme.changed.connect(self.refresh_theme)
         self.time_spin.on_user_change(self._on_datetime_edited)
-        row1.addWidget(lbl_sim); row1.addWidget(self.date_edit); row1.addSpacing(8); row1.addWidget(self.time_spin)
+        row1.addWidget(lbl_sim); row1.addWidget(self.date_edit); row1.addWidget(self.time_spin)
 
-        row1.addStretch(1)
         btn_now = QPushButton("↺ 还原当前时间")
         btn_now.setProperty("role", "primary"); btn_now.setFixedHeight(32)
         btn_now.style().unpolish(btn_now); btn_now.style().polish(btn_now)
@@ -368,13 +417,15 @@ class PageTimezoneFx(QWidget):
         box.addLayout(row1)
 
         # —— 白色分隔线（城市区域之上） ——
-        wline = QFrame(); wline.setFrameShape(QFrame.HLine)
+        wline = self._wline = QFrame(); wline.setFrameShape(QFrame.HLine)
         wline.setFixedHeight(2)
-        wline.setStyleSheet("QFrame{background:#ffffff; color:#ffffff; border:none; max-height:2px;}")
+        wline.setObjectName("TzHLine")
+        wline.setStyleSheet(
+            f"QFrame{{background:{tk('text')}; color:{tk('text')}; border:none; max-height:2px;}}")
         box.addWidget(wline)
 
         # —— 第二行：添加城市 ——
-        row2 = QHBoxLayout(); row2.setSpacing(6)
+        row2 = FlowLayout(h_spacing=8, v_spacing=8)
         lbl_add = QLabel("添加城市："); self._typo(lbl_add, "body")
         self.cb_add = QComboBox(); self.cb_add.setFixedHeight(32); self.cb_add.setMinimumWidth(140)
         btn_add = QPushButton("＋ 添加")
@@ -382,7 +433,6 @@ class PageTimezoneFx(QWidget):
         btn_add.style().unpolish(btn_add); btn_add.style().polish(btn_add)
         btn_add.clicked.connect(self._on_add_clicked)
         row2.addWidget(lbl_add); row2.addWidget(self.cb_add); row2.addWidget(btn_add)
-        row2.addStretch(1)
 
         btn_save = QPushButton("💾 保存为默认城市")
         btn_save.setProperty("role", "nav"); btn_save.setFixedHeight(32)
@@ -401,13 +451,26 @@ class PageTimezoneFx(QWidget):
         self.city_status = QLabel(""); self._typo(self.city_status, "muted")
         box.addWidget(self.city_status)
 
-        # —— 时钟网格 ——
-        self.grid_host = QWidget()
-        self.grid = QGridLayout(self.grid_host)
-        self.grid.setContentsMargins(0, 8, 0, 0)
-        self.grid.setHorizontalSpacing(10)
-        self.grid.setVerticalSpacing(14)
-        box.addWidget(self.grid_host)
+        # —— 时钟网格：右侧标准竖向滚动条，上下浏览 8 城（及更多）——
+        self.clock_scroll = QScrollArea()
+        self.clock_scroll.setObjectName("TzClockScroll")  # 记录区滚动条标准
+        self.clock_scroll.setWidgetResizable(True)
+        self.clock_scroll.setFrameShape(QFrame.NoFrame)
+        self.clock_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.clock_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self.clock_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.clock_scroll.viewport().setAutoFillBackground(False)
+        self.clock_scroll.setStyleSheet(
+            "QScrollArea#TzClockScroll{background:transparent;border:none;}"
+            "QScrollArea#TzClockScroll > QWidget > QWidget{background:transparent;}"
+        )
+
+        # 内容宿主：按视口宽度 heightForWidth，保证 8 城换行后滚动高度正确
+        self.grid_host = _ClockGridHost()
+        self.grid_host.setObjectName("TzClockGridHost")
+        self.grid = FlowLayout(self.grid_host, h_spacing=10, v_spacing=14)
+        self.clock_scroll.setWidget(self.grid_host)
+        box.addWidget(self.clock_scroll, 1)
 
         if not _HAS_ZONEINFO:
             hint = QLabel("⚠ 未检测到系统时区数据库，已使用固定时区偏移（可能不含夏令时）。"
@@ -415,13 +478,14 @@ class PageTimezoneFx(QWidget):
             hint.setWordWrap(True); self._typo(hint, "muted")
             box.addWidget(hint)
 
-    # ────────────────── 汇率转换器（右 30%） ──────────────────
+    # ────────────────── 汇率转换器（右 30%，高度占满） ──────────────────
     def _build_fx(self, col):
-        gb_fx = QGroupBox("汇率转换器（CNY 基准）")
-        gb_fx.setProperty("titleVariant", "accent")
+        gb_fx = make_card("CardTzFx")
+        gb_fx.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         fx_box = QVBoxLayout(gb_fx)
-        col.addWidget(gb_fx)
-        col.addStretch(1)
+        fx_box.setContentsMargins(CARD_LEFT_GAP, CARD_TOP_GAP, CARD_RIGHT_GAP, CARD_BOTTOM_GAP)
+        install_card_title(gb_fx, fx_box, "汇率转换器（CNY 基准）")
+        col.addWidget(gb_fx, 1)  # 高度 100%
 
         self._fx_updating = False
 
@@ -470,6 +534,7 @@ class PageTimezoneFx(QWidget):
         self.fx_status = QLabel("💡 汇率为内置参考值，点击「刷新实时汇率」更新；任意输入框均可直接编辑")
         self.fx_status.setWordWrap(True); self._typo(self.fx_status, "muted")
         fx_box.addWidget(self.fx_status)
+        fx_box.addStretch(1)  # 卡片拉满高度时，内容靠上、下方留白
 
         self._nam = QNetworkAccessManager(self)
         self._nam.finished.connect(self._fx_on_response)
@@ -569,10 +634,9 @@ class PageTimezoneFx(QWidget):
             w = item.widget()
             if w is not None:
                 w.setParent(None)
-        for idx, cc in enumerate(self._cities):
-            r, c = divmod(idx, self.COLS)
+        for cc in self._cities:
             cc.setParent(self.grid_host)
-            self.grid.addWidget(cc, r, c, Qt.AlignHCenter | Qt.AlignTop)
+            self.grid.addWidget(cc)
             cc.show()
         self._refresh_add_combo()
 
@@ -657,6 +721,20 @@ class PageTimezoneFx(QWidget):
         for cc in self._cities:
             cc.apply_utc(now_utc)
         self._sync_base_edit()
+
+    def refresh_theme(self, *_):
+        """重刷本页控件级样式（QSS 选择器覆盖不到的部分）。"""
+        self.time_spin.refresh_theme()
+        for cc in self.findChildren(CityClock):
+            cc.refresh_theme()
+        for f in self.findChildren(QFrame):
+            if f.objectName() == "TzVSep":
+                f.setStyleSheet(
+                    f"QFrame{{color:{tk('border')}; background:{tk('border')}; max-width:1px;}}")
+            elif f.objectName() == "TzHLine":
+                f.setStyleSheet(
+                    f"QFrame{{background:{tk('text')}; color:{tk('text')}; "
+                    "border:none; max-height:2px;}")
 
     def on_enter(self):
         self._sync_base_edit()
